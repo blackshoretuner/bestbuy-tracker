@@ -285,6 +285,15 @@ select.in { cursor: pointer; }
    88px 能装下 10 位（-$12345.00），远超实际会出现的跌幅。 */
 #evTable .w-off { width: 88px; }
 
+/* 历史记录的时间列要装下「旧价起于 → 降价发现」两个时间戳，108px 不够。
+   只加宽 #evTable：电脑榜没有这一列，别的表不受影响。
+   176px 是量出来的：最坏形态是两边都两位月两位日（12/10 21:31→12/11 00:54），
+   含 20px padding 和箭头两侧 margin 实测需要 172px。同一天的事件右边会省掉日期。 */
+#evTable .w-time { width: 176px; }
+.tspan .was { color: var(--fg-mute); }
+.tspan .arrow { color: var(--fg-mute); margin: 0 3px; }
+.tspan .now { color: var(--fg-dim); }
+
 /* 顶部说明条：解释"为什么这一列是空的"这类事 */
 .noteBar {
   flex: none;

@@ -381,6 +381,28 @@ export const store = {
   pricesFor(key) {
     return priceIndex.get(key) || [];
   },
+  /**
+   * 某个价格是从什么时候开始挂出来的。
+   *
+   * pricelog 只记拐点，所以「最后一个 价==price 且 t<=beforeTs 的点」就是
+   * 这一段价格的起点。给历史记录里的降价事件用：左边显示旧价起于何时，
+   * 就能一眼看出"这个价挂了多久才降"。
+   *
+   * 注意别拿 board.lastSeenAt 当"降价前的时间"——那只是上一轮轮询，
+   * 两个时间永远只差一个查询间隔，屏幕上全是 10 分钟，毫无信息量。
+   *
+   * @returns {number|null} null = 轨迹里找不到（比如已被 prunePriceLog 清掉）
+   */
+  priceSegmentStart(key, price, beforeTs = Date.now()) {
+    if (!key || price == null) return null;
+    const arr = priceIndex.get(key);
+    if (!arr) return null;
+    // 倒着找：命中的是紧挨着这次事件的那一段，而不是更早的同价段
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (arr[i].t <= beforeTs && arr[i].p === price) return arr[i].t;
+    }
+    return null;
+  },
   prunePriceLog(days) {
     const cutoff = Date.now() - days * 86400000;
     // 每台机器要留住"窗口开始之前的最后一个点"，否则一台长期不变价的机器

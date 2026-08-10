@@ -65,6 +65,38 @@ function stamp(ts) {
   return today ? t : `${d.getMonth() + 1}/${d.getDate()} ${t}`;
 }
 
+/**
+ * 变价事件的时间单元：旧价起于 → 降价发现，和价格列的 旧价→新价 一一对应。
+ *
+ * 左边**不是**"上次查询的时间"——那永远只差一个轮询间隔（现在是 10 分钟），
+ * 满屏都是同一个数字，没有信息量。左边是**旧价开始挂出的时间**，
+ * 所以能一眼看出"这个价挂了多久才降"。
+ *
+ * 真正的降价发生在这两个时间之间的某一刻，我们只知道这个区间 —— tooltip 里讲明。
+ */
+function timeCell(e) {
+  const dim = 'color:var(--fg-mute)';
+  if (!e.prevTs) return `<td class="mono" style="${dim}">${stamp(e.ts)}</td>`;
+
+  const a = new Date(e.prevTs);
+  const b = new Date(e.ts);
+  const md = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+  const hm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  // 同一天就不重复写日期，省一截宽度
+  const sameDay = a.toDateString() === b.toDateString();
+  const from = `${md(a)} ${hm(a)}`;
+  const to = sameDay ? hm(b) : `${md(b)} ${hm(b)}`;
+
+  const ms = e.ts - e.prevTs;
+  const held = ms >= 86400000 ? `${(ms / 86400000).toFixed(1)} 天` : `${Math.round(ms / 3600000)} 小时`;
+  const title =
+    `$${money(e.prevPrice)} 从 ${from} 起挂着（约 ${held}）\n` +
+    `${sameDay ? md(b) + ' ' + to : to} 这轮查到降为 $${money(e.price)}\n` +
+    `实际调价发生在这两个时间之间`;
+
+  return `<td class="mono tspan" title="${esc(title)}"><span class="was">${from}</span><span class="arrow">→</span><span class="now">${to}</span></td>`;
+}
+
 /* 品相徽标 */
 function condBadge(condition) {
   if (!condition || /^new$/i.test(condition)) return '';
@@ -426,7 +458,7 @@ function renderEvents(rows) {
     const s = e.specs || {};
     const showPrev = e.prevPrice != null && e.prevPrice !== e.price;
     return `<tr class="${e.type === 'drop' || e.type === 'target' ? 'hit' : ''}" title="${esc(e.name || '')}${e.note ? ' · ' + esc(e.note) : ''}">
-      <td class="mono" style="color:var(--fg-mute)">${stamp(e.ts)}</td>
+      ${timeCell(e)}
       <td class="left"><span class="tag ${esc(e.type)}">${TAG_LABEL[e.type] || esc(e.type)}</span></td>
       <td class="name">${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(s.shortName || e.name || '—')}</a>` : esc(e.name || '—')}${condBadge(e.condition)}${e.isAllTimeLow ? '<span class="badge low">新低</span>' : ''}</td>
       <td class="left">${dash(s.cpu)}</td>
