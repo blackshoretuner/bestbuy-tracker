@@ -72,6 +72,25 @@ export class Browser {
       );
     }
 
+    // 同一个 user-data-dir 被两个浏览器实例同时用 → Edge/Chrome 直接退出（code 21）。
+    // 定时轮次正在跑的时候，界面上点「立即运行」/「测浏览器」、或者调 /api/preview
+    // 就会撞上；轮次越长撞得越勤。
+    // 第一次仍用共享 profile（cookie 留着，挑战页少一些），撞锁了就换个独占目录重来。
+    let lastErr = null;
+    for (const dir of [profileDir, `${profileDir}-${process.pid}-${Date.now().toString(36)}`]) {
+      try {
+        return await Browser.#spawnAndConnect(found, { profileDir: dir, headless, width, height, timeout });
+      } catch (e) {
+        lastErr = e;
+        // 只有"进程直接退出"才可能是 profile 冲突；超时、找不到浏览器之类别瞎重试
+        if (e.code !== 'LAUNCH_FAILED') throw e;
+        log.warn('浏览器 profile 可能被另一个实例占着，改用独占目录重试');
+      }
+    }
+    throw lastErr;
+  }
+
+  static async #spawnAndConnect(found, { profileDir, headless, width, height, timeout }) {
     fs.mkdirSync(profileDir, { recursive: true });
 
     const args = [
@@ -280,11 +299,16 @@ export class Page {
   /**
    * 分段滚到底，触发懒加载；直到计数不再增长。
    *
-   * stepPause 别设太短：它是"滚一屏之后等多久再数"。等得比商品渲染出来还快的话，
-   * 计数看着没变 → 连着两轮就判定"加载完了"，实际才滚了三屏。
-   * 实测 400ms 时每页只捞到 8-10 个商品，而 Best Buy 一页有 18-24 个。
+   * 2026-08-11 实测结论，别再往这上面花时间：
+   * **Best Buy 的搜索页不是靠滚动加载商品的。** 强制滚到绝对底部（40 轮 × 1s）、
+   * 到底后再等 4 秒，商品数纹丝不动；页面上那个「Show more」按钮点两次也不涨。
+   * 一页给多少就是多少（无头 ~8-10 个，真实窗口 ~12-16 个）。
+   * 要拿更多只能翻页（URL 的 cp= 参数），见 settings.maxPagesPerSearch。
+   *
+   * 所以这里保持轻量即可 —— 留着是为了兜底（万一哪天改回懒加载），
+   * 不值得为它多等。计数连续不变就早退。
    */
-  async scrollToLoadAll({ maxRounds = 24, stepPause = 900, countExpr } = {}) {
+  async scrollToLoadAll({ maxRounds = 10, stepPause = 500, countExpr } = {}) {
     let last = -1;
     let stable = 0;
     for (let i = 0; i < maxRounds; i++) {
