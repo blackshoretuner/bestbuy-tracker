@@ -249,12 +249,15 @@ export class WebSession {
     for (let page = 1; page <= maxPages; page++) {
       const url = buildSearchUrl({ ...query, page });
       let rows = [];
+      let onPage = null;
       try {
         const health = await this.#load(url, { settleMs: 1800 });
         if (health?.noResults) break;
 
         // 懒加载：Best Buy 的商品网格是虚拟化的，得滚一遍才会渲染出来
-        await this.page.scrollToLoadAll({ maxRounds: 12, stepPause: 400, countExpr: COUNT_SKUS });
+        // 返回值是页面上出现过的商品链接数，用来和实际提取到的条数对比：
+        // 两者差得多 = 提取逻辑漏了；两者都小 = 页面根本没加载出那么多。
+        onPage = await this.page.scrollToLoadAll({ maxRounds: 12, stepPause: 400, countExpr: COUNT_SKUS });
         rows = (await this.page.evaluate(EXTRACT_LIST)) || [];
       } catch (e) {
         if (e.code === 'BLOCKED') throw e;         // 被拦了就整条中止
@@ -270,7 +273,10 @@ export class WebSession {
         all.set(r.sku, r);
         added++;
       }
-      log.debug(`搜索页 ${page}：新增 ${added} 台（累计 ${all.size}）`);
+      log.debug(
+        `搜索页 ${page}：页面 ${onPage ?? '?'} 个商品链接 → 提取 ${rows.length} 台，` +
+          `新增 ${added}（累计 ${all.size}）`
+      );
 
       if (all.size >= limit || added === 0) break;
     }
