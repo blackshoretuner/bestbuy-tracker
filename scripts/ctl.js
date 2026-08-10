@@ -30,6 +30,8 @@ const SERVER = path.join(ROOT, 'server.js');
 const { DATA_DIR } = await import(pathToFileURL(path.join(ROOT, 'src', 'config.js')).href);
 const PID_FILE = path.join(DATA_DIR, 'server.pid');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+const LOG_FILE = path.join(DATA_DIR, 'server.log');
+const LOG_MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_PORT = 8787;
 
 /* ------------------------------------------------------------------ */
@@ -79,6 +81,34 @@ function setSavedPort(port) {
   const tmp = SETTINGS_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(s, null, 2), 'utf8');
   fs.renameSync(tmp, SETTINGS_FILE);
+}
+
+/**
+ * 后台启动时，把服务的 stdout/stderr 接到 data/server.log。
+ *
+ * 以前这里是 stdio:'ignore'：服务要是自己退了，崩溃栈直接进虚空，
+ * 事后只看得到"未运行"，查不出为什么（已经吃过两次这个亏）。
+ * 日志带上限，超了轮转一代，不会把磁盘吃光。
+ *
+ * 注意：返回的 fd 由调用方负责 close —— 父进程攥着它 ctl.js 就退不掉，
+ * 而子进程 spawn 时已经拿到自己的副本了。
+ *
+ * @returns {number|null} null 表示日志开不了，此时退回 'ignore'，不挡启动
+ */
+function openLogFd(port) {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > LOG_MAX_BYTES) {
+      fs.rmSync(LOG_FILE + '.old', { force: true });
+      fs.renameSync(LOG_FILE, LOG_FILE + '.old');
+    }
+    const fd = fs.openSync(LOG_FILE, 'a');
+    // 每次启动打一条分隔线，事后一眼能看出"这一段是哪次运行、什么时候起的"
+    fs.writeSync(fd, `\n===== ${new Date().toLocaleString('zh-CN')}  启动 (端口 ${port}, ctl) =====\n`);
+    return fd;
+  } catch {
+    return null;
+  }
 }
 
 function isAlive(pid) {
@@ -187,6 +217,8 @@ async function cmdStatus() {
   if (!inst) {
     say(`${red('●')} 未运行`);
     say(dim(`  默认端口 ${port} · ${await portBusy(port) ? yellow('注意：该端口被别的程序占着') : '端口空闲'}`));
+    // 没在运行时最想知道的就是"它怎么没的"，直接把日志摆出来
+    if (fs.existsSync(LOG_FILE)) say(dim(`  上次运行的日志 ${LOG_FILE}`));
     say(dim(`  启动：bbt start`));
     return 1;
   }
@@ -222,7 +254,11 @@ async function cmdStart(portArg) {
     return 1;
   }
 
-  if (running) {
+  // 必须排掉 foreign：那是同程序**另一份拷贝**的实例，不是"我们在跑"。
+  // 少了这个判断，`bbt start 8791` 撞见隔壁那份占着 8787，就会回一句
+  // "已经在运行了" 然后拒绝启动 —— 而 8791 明明是空的。
+  // （上面那个分支只拦"别人家的 + 同端口"，换端口的情况会漏到这里。）
+  if (running && !running.foreign) {
     say(yellow('已经在运行了') + dim(` — http://127.0.0.1:${running.port} (PID ${running.pid})`));
     say(dim('  想换端口：bbt port <端口>    想重启：bbt restart'));
     return 0;
@@ -245,21 +281,30 @@ async function cmdStart(portArg) {
   const env = { ...process.env };
   delete env.PORT;
 
+  const logFd = openLogFd(port);
   const child = spawn(process.execPath, [SERVER], {
     cwd: ROOT,
     env,
     detached: true,
-    stdio: 'ignore',
+    stdio: logFd === null ? 'ignore' : ['ignore', logFd, logFd],
     windowsHide: true,
   });
   child.unref();
+  // 子进程已经有自己的 fd 副本，父进程这份必须放掉，否则 ctl.js 挂着不退
+  if (logFd !== null) {
+    try { fs.closeSync(logFd); } catch { /* ignore */ }
+  }
 
   const inst = await waitFor(() => probe(port));
   if (!inst) {
-    die(`启动超时。手动跑一遍看报什么错：\n  cd "${ROOT}" && node server.js`);
+    die(
+      `启动超时。看日志里报了什么：\n  ${LOG_FILE}\n` +
+        `  或者手动跑一遍：cd "${ROOT}" && node server.js`
+    );
   }
 
   say(`${green('✓')} 已启动 — ${bold(`http://127.0.0.1:${inst.port}`)} (PID ${inst.pid})`);
+  if (logFd !== null) say(dim(`  日志 ${LOG_FILE}`));
   return 0;
 }
 
@@ -460,7 +505,8 @@ function cmdHelp() {
   ${bold('bbt open')}           浏览器里打开界面
 
 ${dim(`  配置端口：${savedPort()}`)}
-${dim(`  数据目录：${DATA_DIR}`)}`);
+${dim(`  数据目录：${DATA_DIR}`)}
+${dim(`  运行日志：${LOG_FILE}`)}${dim(' （后台启动时才写；超过 2MB 轮转一代到 .old）')}`);
   return 0;
 }
 
