@@ -257,7 +257,7 @@ export class WebSession {
         // 懒加载：Best Buy 的商品网格是虚拟化的，得滚一遍才会渲染出来
         // 返回值是页面上出现过的商品链接数，用来和实际提取到的条数对比：
         // 两者差得多 = 提取逻辑漏了；两者都小 = 页面根本没加载出那么多。
-        onPage = await this.page.scrollToLoadAll({ maxRounds: 12, stepPause: 400, countExpr: COUNT_SKUS });
+        onPage = await this.page.scrollToLoadAll({ maxRounds: 24, stepPause: 900, countExpr: COUNT_SKUS });
         rows = (await this.page.evaluate(EXTRACT_LIST)) || [];
       } catch (e) {
         if (e.code === 'BLOCKED') throw e;         // 被拦了就整条中止
