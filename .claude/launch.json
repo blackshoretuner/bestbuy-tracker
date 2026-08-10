@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "//": "Attach only -- no command on purpose. This app is started by bbt (or start.cmd) and keeps its port in data/settings.json, not in a PORT env var; letting the preview harness launch its own copy would put two servers on the same data/ directory, where they clobber each other's board.json and fight over server.pid. Start it with `bbt start` first, then preview attaches here.",
+      "name": "bestbuy-tracker",
+      "url": "http://127.0.0.1:8787",
+      "port": 8787
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "bestbuy-price-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Best Buy 降价雷达 - 定时查询数码区(电脑/官翻/Open-Box)降价并记录历史",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "bbt": "node scripts/ctl.js",
+    "status": "node scripts/ctl.js status",
+    "up": "node scripts/ctl.js start",
+    "stop": "node scripts/ctl.js stop",
+    "restart": "node scripts/ctl.js restart",
+    "build": "node scripts/build-portable.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}

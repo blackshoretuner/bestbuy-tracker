@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Best Buy 降价雷达 · 电脑</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💻</text></svg>">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">▚</span>
+    <div>
+      <h1>降价雷达</h1>
+      <p>Best Buy · 笔电 / 台式</p>
+    </div>
+  </div>
+
+  <div class="status" id="statusBox">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">连接中…</span>
+    <span class="sep"></span>
+    <span class="muted">下次</span>
+    <span class="mono" id="countdown">—</span>
+  </div>
+
+  <div class="topActions">
+    <button class="btn primary" id="btnRun"><span class="ic">⟳</span> 立即查询</button>
+    <button class="btn" id="btnToggle">停止</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-tab="board">电脑榜 <em id="cntBoard">0</em></button>
+  <button class="tab" data-tab="history">历史记录 <em id="cntEvents">0</em></button>
+  <button class="tab" data-tab="watch">关注 <em id="cntWatch">0</em></button>
+  <button class="tab" data-tab="searches">自动搜索 <em id="cntSearch">0</em></button>
+  <button class="tab" data-tab="settings">设置</button>
+</nav>
+
+<!-- ================= 电脑榜 ================= -->
+<section class="panel active" id="panel-board">
+  <div class="filters">
+    <input class="in grow" id="fBoardQ" placeholder="搜型号 / CPU / 显卡…  例：zephyrus 4070">
+    <div class="seg" id="fBoardForm">
+      <button data-v="all" class="on">全部</button>
+      <button data-v="laptop">笔电</button>
+      <button data-v="desktop">台式</button>
+      <button data-v="aio">一体机</button>
+    </div>
+    <div class="seg" id="fBoardCond">
+      <button data-v="all" class="on">不限</button>
+      <button data-v="new">全新</button>
+      <button data-v="used">官翻/拆封</button>
+    </div>
+    <input class="in w90" id="fBoardMax" type="number" placeholder="价格上限">
+    <label class="chk"><input type="checkbox" id="fBoardDrops"> 只看降价</label>
+    <label class="chk"><input type="checkbox" id="fBoardStock" checked> 有货</label>
+    <label class="chk"><input type="checkbox" id="fBoardTrue"> 只看真好价</label>
+    <select class="in w130" id="fBoardSort">
+      <option value="deal">值不值 ↓</option>
+      <option value="hist">历史低位</option>
+      <option value="cross">同档最便宜</option>
+      <option value="price">价格 ↑</option>
+      <option value="-price">价格 ↓</option>
+      <option value="drop">折扣最大</option>
+      <option value="recent">最近降价</option>
+      <option value="gpu">显卡最强</option>
+      <option value="ram">内存最大</option>
+      <option value="weight">最轻</option>
+      <option value="name">型号</option>
+    </select>
+    <span class="grow-sp"></span>
+    <span class="count" id="boardCount"></span>
+  </div>
+
+  <div class="noteBar" id="boardHint" hidden></div>
+
+  <div class="tableWrap">
+    <table class="grid" id="boardTable">
+      <thead>
+        <tr>
+          <th class="w-sku">sku</th>
+          <th class="w-name">name</th>
+          <th class="w-cpu">cpu</th>
+          <th class="w-gpu">gpu</th>
+          <th class="w-ram">ram</th>
+          <th class="w-disk">disk</th>
+          <th class="w-scr">screen</th>
+          <th class="w-wt">weight</th>
+          <th class="w-price">price</th>
+          <th class="w-off">off</th>
+          <th class="w-pct" title="同配置的机器现在都卖多少，这台排第几。越低越划算">同档</th>
+          <th class="w-pct" title="当前价在它自己过去 90 天价格分布里的位置（按时间加权）。越低越是历史低位">历史</th>
+          <th class="w-act"></th>
+        </tr>
+      </thead>
+      <tbody id="boardBody"></tbody>
+    </table>
+    <div class="empty" id="boardEmpty" hidden></div>
+  </div>
+</section>
+
+<!-- ================= 历史记录 ================= -->
+<section class="panel" id="panel-history">
+  <div class="filters">
+    <input class="in grow" id="fEvQ" placeholder="搜索历史记录…">
+    <div class="seg" id="fEvType">
+      <button data-v="drop,target" class="on">降价</button>
+      <button data-v="found">新发现</button>
+      <button data-v="all">全部</button>
+    </div>
+    <select class="in w110" id="fEvSince">
+      <option value="">不限时间</option>
+      <option value="1">近 1 天</option>
+      <option value="3">近 3 天</option>
+      <option value="7">近 7 天</option>
+      <option value="30">近 30 天</option>
+    </select>
+    <span class="grow-sp"></span>
+    <span class="count" id="evCount"></span>
+    <a class="btn sm" href="/api/events/export.csv">导出 CSV</a>
+    <button class="btn sm danger" id="btnClearEvents">清空</button>
+  </div>
+
+  <div class="tableWrap">
+    <table class="grid" id="evTable">
+      <thead>
+        <tr>
+          <th class="w-time">时间</th>
+          <th class="w-tag">事件</th>
+          <th class="w-name">name</th>
+          <th class="w-cpu">cpu</th>
+          <th class="w-gpu">gpu</th>
+          <th class="w-ram">ram</th>
+          <th class="w-disk">disk</th>
+          <th class="w-price">price</th>
+          <th class="w-off">跌幅</th>
+          <th class="w-src">来源</th>
+        </tr>
+      </thead>
+      <tbody id="evBody"></tbody>
+    </table>
+    <div class="empty" id="evEmpty" hidden></div>
+  </div>
+</section>
+
+<!-- ================= 关注 ================= -->
+<section class="panel" id="panel-watch">
+  <div class="filters">
+    <input class="in grow" id="watchInput" placeholder="贴 Best Buy 商品链接，或直接填 SKU 数字，回车添加">
+    <input class="in w110" id="watchTarget" type="number" placeholder="目标价 $">
+    <button class="btn primary" id="btnAddWatch">加入关注</button>
+  </div>
+  <div class="tableWrap">
+    <table class="grid" id="watchTable">
+      <thead>
+        <tr>
+          <th class="w-sku">sku</th>
+          <th class="w-name">name</th>
+          <th class="w-cpu">cpu</th>
+          <th class="w-gpu">gpu</th>
+          <th class="w-ram">ram</th>
+          <th class="w-price">现价</th>
+          <th class="w-off">较起始</th>
+          <th class="w-low">历史低</th>
+          <th class="w-tgt">目标价</th>
+          <th class="w-spark">走势</th>
+          <th class="w-act"></th>
+        </tr>
+      </thead>
+      <tbody id="watchBody"></tbody>
+    </table>
+    <div class="empty" id="watchEmpty" hidden></div>
+  </div>
+</section>
+
+<!-- ================= 自动搜索 ================= -->
+<section class="panel" id="panel-searches">
+  <div class="filters">
+    <span class="hint">每轮定时查询会依次跑下面这些搜索，命中的机器写进「电脑榜」和「历史记录」。</span>
+    <span class="grow-sp"></span>
+    <button class="btn primary" id="btnAddSearch">+ 新建搜索</button>
+  </div>
+  <div id="searchList" class="cards"></div>
+</section>
+
+<!-- ================= 设置 ================= -->
+<section class="panel" id="panel-settings">
+  <div class="settingsGrid">
+
+    <div class="card">
+      <h3>数据源</h3>
+      <label class="field">
+        <span>通道</span>
+        <select class="in" id="setProvider">
+          <option value="web">浏览器读网页（默认 · 不需要任何 Key）</option>
+          <option value="api">官方 API（字段最全，但注册要美国手机号）</option>
+          <option value="auto">有 Key 走 API，否则回落浏览器</option>
+          <option value="scrape">裸 HTTP 抓取（几乎必被拦，不建议）</option>
+        </select>
+        <em class="fieldHint" id="providerHint"></em>
+      </label>
+      <label class="chk"><input type="checkbox" id="setOnlyComputers"> 只保留电脑（滤掉配件/包/鼠标等）</label>
+      <label class="chk"><input type="checkbox" id="setHideThird"> 隐藏第三方卖家（Marketplace）的商品</label>
+      <label class="chk"><input type="checkbox" id="setHeadless"> 浏览器无头运行（关掉则用真实窗口，会移到屏幕外）</label>
+      <label class="field">
+        <span>每条搜索翻几页</span>
+        <input class="in" id="setMaxPages" type="number" min="1" max="8">
+        <em class="fieldHint">一页约 15–20 台。页数越多越全，但一轮耗时越长。</em>
+      </label>
+      <details>
+        <summary style="font-size:11.5px;color:var(--fg-mute);cursor:pointer">官方 API Key（可选）</summary>
+        <label class="field" style="margin-top:8px">
+          <span><a href="https://developer.bestbuy.com/" target="_blank" rel="noopener">申请入口 ↗</a>（需要美国手机号才能注册账号）</span>
+          <input class="in" id="setApiKey" type="password" placeholder="留空 = 不修改已保存的 Key">
+          <em class="fieldHint" id="apiKeyHint"></em>
+        </label>
+      </details>
+      <div class="row">
+        <button class="btn sm" data-diag="web">测浏览器</button>
+        <button class="btn sm" data-diag="api">测 API</button>
+        <button class="btn sm" data-diag="notify">测通知</button>
+      </div>
+      <pre class="diagOut" id="diagOut" hidden></pre>
+    </div>
+
+    <div class="card">
+      <h3>定时查询</h3>
+      <label class="field">
+        <span>间隔（分钟）</span>
+        <input class="in" id="setInterval" type="number" min="1" max="1440">
+      </label>
+      <label class="chk"><input type="checkbox" id="setAutoStart"> 启动软件后自动开始定时查询</label>
+      <label class="chk"><input type="checkbox" id="setRunOnLaunch"> 启动后立刻先跑一轮</label>
+      <label class="chk"><input type="checkbox" id="setQuiet"> 免打扰时段（只记录不弹通知）</label>
+      <div class="row">
+        <input class="in w90" id="setQuietStart" type="time">
+        <span class="muted">到</span>
+        <input class="in w90" id="setQuietEnd" type="time">
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>降价判定与通知</h3>
+      <div class="row">
+        <label class="field grow"><span>降幅至少 %</span><input class="in" id="setMinPct" type="number" min="0"></label>
+        <label class="field grow"><span>降幅至少 $</span><input class="in" id="setMinAmt" type="number" min="0"></label>
+      </div>
+      <em class="fieldHint">低于阈值的波动仍会更新价格，但不写入历史记录、不弹通知。</em>
+      <label class="chk"><input type="checkbox" id="setToast"> Windows 桌面通知</label>
+      <label class="chk"><input type="checkbox" id="setSound"> 通知带声音</label>
+      <label class="chk"><input type="checkbox" id="setOnlyWatch"> 只对「关注列表」通知</label>
+    </div>
+
+    <div class="card">
+      <h3>分类 ID 查找</h3>
+      <em class="fieldHint">Best Buy 偶尔会调整分类树。在这里查到的 ID 可以填进「自动搜索」。</em>
+      <div class="row">
+        <input class="in grow" id="catQ" placeholder="例：laptop / desktop / all-in-one">
+        <button class="btn sm" id="btnCatSearch">查找</button>
+      </div>
+      <div class="catList" id="catList"></div>
+    </div>
+
+    <div class="card">
+      <h3>数据与诊断</h3>
+      <div class="kv"><span>数据目录</span><code id="dataDir">—</code></div>
+      <div class="kv"><span>上轮结果</span><span id="lastCycle">—</span></div>
+      <div class="row">
+        <button class="btn sm danger" id="btnClearBoard">清空电脑榜</button>
+      </div>
+      <pre class="logBox" id="logBox"></pre>
+    </div>
+
+  </div>
+  <div class="saveBar">
+    <button class="btn primary" id="btnSaveSettings">保存设置</button>
+    <span class="saveHint" id="saveHint"></span>
+  </div>
+</section>
+
+<div class="toastHost" id="toastHost"></div>
+
+<!-- 搜索编辑弹层 -->
+<dialog class="modal" id="searchModal">
+  <form method="dialog" id="searchForm">
+    <h3 id="searchModalTitle">新建搜索</h3>
+    <label class="field"><span>名称</span><input class="in" name="name" required placeholder="例：游戏本 · 4070 以上"></label>
+    <div class="row">
+      <label class="field grow"><span>通道</span>
+        <select class="in" name="channel">
+          <option value="api">普通目录（含官翻/二手）</option>
+          <option value="openbox">Open Box 拆封</option>
+        </select>
+      </label>
+      <label class="field grow"><span>品相</span>
+        <select class="in" name="condition">
+          <option value="any">不限</option>
+          <option value="new">全新</option>
+          <option value="refurbished">官翻</option>
+          <option value="preowned">二手</option>
+        </select>
+      </label>
+    </div>
+    <label class="field"><span>分类 ID</span>
+      <select class="in" name="categoryId" id="searchCategory"></select>
+    </label>
+    <label class="field"><span>关键词（空格分隔，可留空）</span><input class="in" name="keywords" placeholder="gaming rtx"></label>
+    <div class="row">
+      <label class="field grow"><span>最低价 $</span><input class="in" name="minPrice" type="number"></label>
+      <label class="field grow"><span>最高价 $</span><input class="in" name="maxPrice" type="number"></label>
+      <label class="field grow"><span>折扣至少 %</span><input class="in" name="minPercentOff" type="number"></label>
+    </div>
+    <div class="row">
+      <label class="field grow"><span>排序</span>
+        <select class="in" name="sort">
+          <option value="percentSavings.desc">折扣最大</option>
+          <option value="salePrice.asc">价格最低</option>
+          <option value="dollarSavings.desc">省得最多</option>
+          <option value="customerReviewAverage.desc">评分最高</option>
+        </select>
+      </label>
+      <label class="field grow"><span>每轮最多</span><input class="in" name="limit" type="number" min="1" max="100"></label>
+    </div>
+    <label class="chk"><input type="checkbox" name="onlySale"> 只要正在打折的</label>
+    <div class="modalActions">
+      <button class="btn" value="cancel" formnovalidate>取消</button>
+      <button class="btn primary" value="ok" id="searchSubmit">保存</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="app.js" type="module"></script>
+</body>
+</html>

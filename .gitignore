@@ -1,0 +1,15 @@
+# 依赖与打包产物（dist 内含 88MB node.exe 和 33MB zip，不要提交）
+node_modules/
+dist/
+
+# 运行时状态
+data/server.pid
+*.log
+
+# Claude Code 本地设置
+.claude/settings.local.json
+
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
