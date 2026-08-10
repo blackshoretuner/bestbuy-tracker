@@ -278,6 +278,13 @@ select.in { cursor: pointer; }
    所以在表上切一个 class 就能一起收。换成 API 通道有数据了会自己回来。 */
 .grid.noWeight .w-wt { display: none; }
 
+/* 历史记录的「跌幅」列装的是金额（-$330.00），比电脑榜那列的百分比（-42%）长得多，
+   62px 会把每一行都截成省略号（实测 18/18 全中）。只加宽 #evTable 这一列：
+   电脑榜的 off 仍是 62px，百分比够用，不白占宽度。
+   table-layout:fixed 下列宽由首行决定，所以改 th 就够，td 不用动。
+   88px 能装下 10 位（-$12345.00），远超实际会出现的跌幅。 */
+#evTable .w-off { width: 88px; }
+
 /* 顶部说明条：解释"为什么这一列是空的"这类事 */
 .noteBar {
   flex: none;
