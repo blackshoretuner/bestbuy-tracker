@@ -277,8 +277,14 @@ export class Page {
     return res.result?.value;
   }
 
-  /** 分段滚到底，触发懒加载；直到计数不再增长 */
-  async scrollToLoadAll({ maxRounds = 12, stepPause = 400, countExpr } = {}) {
+  /**
+   * 分段滚到底，触发懒加载；直到计数不再增长。
+   *
+   * stepPause 别设太短：它是"滚一屏之后等多久再数"。等得比商品渲染出来还快的话，
+   * 计数看着没变 → 连着两轮就判定"加载完了"，实际才滚了三屏。
+   * 实测 400ms 时每页只捞到 8-10 个商品，而 Best Buy 一页有 18-24 个。
+   */
+  async scrollToLoadAll({ maxRounds = 24, stepPause = 900, countExpr } = {}) {
     let last = -1;
     let stable = 0;
     for (let i = 0; i < maxRounds; i++) {
