@@ -119,6 +119,16 @@
       <option value="7">近 7 天</option>
       <option value="30">近 30 天</option>
     </select>
+    <select class="in w130" id="fEvSort">
+      <option value="recent">时间 ↓ 最新</option>
+      <option value="oldest">时间 ↑ 最早</option>
+      <option value="pct">跌幅 % ↓</option>
+      <option value="delta">跌幅 $ ↓</option>
+      <option value="held">挂价最久 ↓</option>
+      <option value="price">现价 ↑</option>
+      <option value="-price">现价 ↓</option>
+      <option value="name">型号</option>
+    </select>
     <span class="grow-sp"></span>
     <span class="count" id="evCount"></span>
     <a class="btn sm" href="/api/events/export.csv">导出 CSV</a>

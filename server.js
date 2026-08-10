@@ -269,15 +269,9 @@ route('GET', '/api/events', async (req, res, _p, query) => {
     type: query.get('type') || 'all',
     q: query.get('q') || '',
     since: num(query.get('since')),
-  });
-
-  // 给变价事件补上"旧价是从什么时候开始挂的"。
-  // 从 pricelog 现推，不往事件里存字段 —— 这样已经记下的历史事件也能一并显示，
-  // 不会出现"新事件有、老事件没有"的半拉子列。
-  out.rows = out.rows.map((e) => {
-    if (e.prevPrice == null || !e.boardKey) return e;
-    const prevTs = store.priceSegmentStart(e.boardKey, e.prevPrice, e.ts);
-    return prevTs && prevTs < e.ts ? { ...e, prevTs } : e;
+    // prevTs 的补齐和排序都在 store.listEvents 里做 —— 「挂价时长」这个排序键
+    // 依赖 prevTs，必须在分页之前就算好
+    sort: query.get('sort') || 'recent',
   });
   // 带上榜单统计，前端才能解释清楚"为什么筛出来是空的"
   json(res, { ok: true, ...out, board: store.boardStats() });

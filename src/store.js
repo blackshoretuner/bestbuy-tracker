@@ -168,6 +168,41 @@ function deepMerge(base, patch) {
   return out;
 }
 
+/**
+ * 历史记录的排序方式。
+ *
+ * 「新发现」这类事件没有 pct/delta，按跌幅排时一律沉底（用 -1 兜底），
+ * 别让一堆没有跌幅的记录混在真降价前面 —— 和电脑榜"没数据的排最后"一个道理。
+ * 所有比较器返回 0 时，调用方还会再按时间倒序兜一层，保证顺序稳定不乱跳。
+ */
+const heldMs = (e) => (e.prevTs ? e.ts - e.prevTs : -1);
+
+/**
+ * 「跌幅」只对**我们真观测到的降价**才成立。
+ *
+ * 坑在这里：found 事件也带 pct/delta，但那是 Best Buy 自己标的
+ * regularPrice 折扣（tracker.js 里 `pct: p.percentOff`），和 drop 事件的
+ * "上一轮 → 这一轮真的跌了多少"完全是两回事。同一个字段名，两种含义。
+ * 不把它们分开的话，按「跌幅 ↓」排序会让一堆标称折扣冒充真降价占满榜首 ——
+ * 正是 regularPrice 常年虚高要防的事。
+ */
+const OBSERVED_DROP = new Set(['drop', 'target']);
+const dropPct = (e) => (OBSERVED_DROP.has(e.type) && e.pct != null ? e.pct : -1);
+const dropDelta = (e) => (OBSERVED_DROP.has(e.type) && e.delta != null ? e.delta : -1);
+
+const EVENT_SORTS = {
+  recent: (a, b) => b.ts - a.ts,
+  oldest: (a, b) => a.ts - b.ts,
+  pct: (a, b) => dropPct(b) - dropPct(a),
+  delta: (a, b) => dropDelta(b) - dropDelta(a),
+  price: (a, b) => (a.price ?? Infinity) - (b.price ?? Infinity),
+  '-price': (a, b) => (b.price ?? -1) - (a.price ?? -1),
+  // 这个价挂了多久才降 —— 挂得越久的降价越有"憋出来的"意味
+  held: (a, b) => heldMs(b) - heldMs(a),
+  name: (a, b) =>
+    String(a.specs?.shortName || a.name || '').localeCompare(String(b.specs?.shortName || b.name || '')),
+};
+
 export const store = {
   /* ---- 设置 ---- */
   getSettings() {
@@ -467,7 +502,7 @@ export const store = {
     events.append(row);
     return row;
   },
-  listEvents({ limit = 200, offset = 0, type = null, q = '', since = null } = {}) {
+  listEvents({ limit = 200, offset = 0, type = null, q = '', since = null, sort = 'recent' } = {}) {
     let rows = events.rows;
     if (type && type !== 'all') {
       const types = type.split(',');
@@ -483,9 +518,19 @@ export const store = {
           (r.searchName || '').toLowerCase().includes(needle)
       );
     }
-    // 按时间倒序。文件是追加写的，正常情况下插入顺序就是时间顺序，
-    // 但补录/导入的数据可能乱序，这里统一排一次。
-    const sorted = [...rows].sort((a, b) => b.ts - a.ts);
+    // 补上"旧价是从什么时候开始挂的"。必须在排序**之前**做完 ——
+    // 「挂价时长」这个排序键就是从它算出来的，等分页完再补就晚了。
+    // 从 pricelog 现推，不往事件里存字段，所以老事件也能一并参与排序。
+    rows = rows.map((e) => {
+      if (e.prevPrice == null || !e.boardKey) return e;
+      const prevTs = this.priceSegmentStart(e.boardKey, e.prevPrice, e.ts);
+      return prevTs && prevTs < e.ts ? { ...e, prevTs } : e;
+    });
+
+    // 文件是追加写的，正常情况下插入顺序就是时间顺序，但补录/导入的数据可能乱序，
+    // 所以哪怕按时间排也要真排一次。
+    const cmp = EVENT_SORTS[sort] || EVENT_SORTS.recent;
+    const sorted = [...rows].sort((a, b) => cmp(a, b) || b.ts - a.ts);
 
     // grandTotal / byType 是"没过滤"的全量。用来区分两种空：
     // 压根没有记录，还是有记录但当前筛选条件没命中。
@@ -497,6 +542,7 @@ export const store = {
       rows: sorted.slice(offset, offset + limit),
       grandTotal: events.rows.length,
       byType,
+      sort: EVENT_SORTS[sort] ? sort : 'recent',
     };
   },
   clearEvents() {

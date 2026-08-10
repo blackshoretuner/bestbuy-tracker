@@ -13,7 +13,7 @@ const state = {
   searches: [],
   board: [],
   boardFilters: { q: '', form: 'all', condition: 'all', maxPrice: '', onlyDrops: false, inStock: true, trueDeal: false, sort: 'deal' },
-  evFilters: { q: '', type: 'drop,target', since: '' },
+  evFilters: { q: '', type: 'drop,target', since: '', sort: 'recent' },
   editingSearch: null,
 };
 
@@ -379,7 +379,7 @@ function debounce(fn, ms) {
 /* ---------------- 历史记录 ---------------- */
 async function loadEvents() {
   const f = state.evFilters;
-  const qs = new URLSearchParams({ q: f.q, type: f.type, limit: '400' });
+  const qs = new URLSearchParams({ q: f.q, type: f.type, sort: f.sort, limit: '400' });
   if (f.since) qs.set('since', String(Date.now() - Number(f.since) * 86400000));
 
   try {
@@ -474,6 +474,7 @@ function renderEvents(rows) {
 
 $('#fEvQ').addEventListener('input', debounce((e) => { state.evFilters.q = e.target.value; loadEvents(); }, 250));
 $('#fEvSince').addEventListener('change', (e) => { state.evFilters.since = e.target.value; loadEvents(); });
+$('#fEvSort').addEventListener('change', (e) => { state.evFilters.sort = e.target.value; loadEvents(); });
 bindSeg('#fEvType', (v) => { state.evFilters.type = v; loadEvents(); });
 
 $('#btnClearEvents').addEventListener('click', async () => {
