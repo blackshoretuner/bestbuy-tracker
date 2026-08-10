@@ -2,8 +2,10 @@
 node_modules/
 dist/
 
-# 运行时状态
-data/server.pid
+# 运行时状态：board/events/pricelog/watchlist/searches 都是本机跑出来的数据，
+# 换台机器毫无意义，而且 board.json 每轮都变、diff 噪音极大。
+# settings.json 还是 API Key 的存放处 —— 打包脚本专门防了它进发布包，这里也要防。
+data/
 *.log
 
 # Claude Code 本地设置
