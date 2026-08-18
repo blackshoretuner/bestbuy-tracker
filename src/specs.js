@@ -203,6 +203,56 @@ function parseDisk(nameSegs, map, fullText) {
 }
 
 /* ------------------------------------------------------------------ */
+/* 显存（只有独立显卡才有意义）                                          */
+/* ------------------------------------------------------------------ */
+/**
+ * 从显卡名里取显存，例如 "16GB GDDR7" → "16G GDDR7"。
+ *
+ * 为什么不复用 parseRam：它找的是**系统内存**，正则要求
+ * `数字GB + (Memory|RAM|LPDDR|DDR|Unified)`，而显卡写的是 "12GB GDDR7" ——
+ * GDDR 以 G 开头，匹配不上，所以显卡的 ram 一直是 null。
+ * 两者语义也不同（显存 vs 系统内存），混在一个字段里排序和分档都会错。
+ */
+function parseVram(nameSegs, map, fullText) {
+  const explicit = pick(map, 'video memory', 'graphics memory', 'memory size');
+  const src = [explicit, nameSegs.join(' '), fullText].filter(Boolean).join(' ');
+  const m = src.match(/(\d{1,2})\s?GB\s+(GDDR\d[X]?|HBM\d?)/i);
+  if (m) return `${m[1]}G ${m[2].toUpperCase()}`;
+  // 退一步：MSI 那种 "5070 12G GAMING TRIO" 型号里的容量标注
+  const bare = src.match(/\b(\d{1,2})\s?GB?\b(?=\s|$)/i);
+  return bare && Number(bare[1]) <= 48 ? `${bare[1]}G` : null;
+}
+
+/* 显卡型号短名要去掉的噪声：芯片型号自己有一列，别在型号里重复一遍。 */
+const GPU_NOISE = [
+  /\b(?:nvidia|amd|intel)\b/gi,
+  /\bgeforce\b|\bradeon\b|\barc\b/gi,
+  /\b(?:RTX|GTX|RX)\s*\d{3,4}\s*(?:Ti\s*Super|Super|Ti|XTX|XT)?/gi,
+  // 接口要在容量之前删：不然 "PCI Express Gen 5" 里的 5 被容量规则吃掉后，
+  // 剩下的 "PCI Express Gen" 就再也匹配不上了
+  /\bPCI\s*Express\s*(?:Gen\s*)?[\d.]+(?:\s*x\d+)?/gi,
+  // 容量里的 G 必须紧跟数字。写成 \d{1,2}\s?GB? 的话，"Gen 5 Graphics" 中的
+  // "5 G" 会被当成容量吃掉，把 Graphics 啃成 raphics（踩过）。
+  /\b\d{1,2}GB?\b\s*(?:GDDR\d[X]?|HBM\d?)?/gi,
+  // 容量和类型之间夹了别的词时（"16GB OC GDDR7"）类型会落单，单独再扫一遍
+  /\b(?:GDDR\d[X]?|HBM\d?)\b/gi,
+  /\bgraphics card\b|\bvideo card\b/gi,
+  /\bwith\b.*$/i,
+  // 颜色：整机走 segs[1] 天然不含颜色，配件用的是全名，得自己剥
+  /\s*[-–—]\s*(?:black|white|silver|gray|grey|blue|red|green|pink)\s*$/gi,
+  /[-–—,]\s*$/,
+];
+
+function shortComponentName(brand, fullName, form) {
+  let s = fullName || '';
+  if (form === 'gpu') for (const re of GPU_NOISE) s = s.replace(re, ' ');
+  // 品牌已经单独一列
+  if (brand) s = s.replace(new RegExp(`^\\s*${brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[-–—]?`, 'i'), ' ');
+  s = s.replace(/\s{2,}/g, ' ').replace(/^[\s,–—-]+|[\s,–—-]+$/g, '').trim();
+  return s.length >= 2 ? s.slice(0, 40) : null;
+}
+
+/* ------------------------------------------------------------------ */
 /* 重量 / 屏幕                                                          */
 /* ------------------------------------------------------------------ */
 function parseWeight(map) {
@@ -364,11 +414,16 @@ export function extractSpecs(product) {
 
   const brand = product.manufacturer || (segs.length > 1 ? segs[0] : null);
   const year = parseYear(fullText, map);
-  const model = shortModel(brand, segs.length > 1 ? segs[1] : segs[0], fullName);
+  // form 要在算型号短名之前定下来 —— 配件和整机的清洗规则不一样
+  // （显卡的芯片型号自己有一列，不该再挤在型号里重复一遍）
+  const form = classifyForm(product, map);
+  const isPart = COMPONENT_FORMS.has(form);
+  const model =
+    (isPart ? shortComponentName(brand, fullName, form) : null) ||
+    shortModel(brand, segs.length > 1 ? segs[1] : segs[0], fullName);
   let cpu = parseCpu(segs, map, fullText);
   let gpu = parseGpu(segs, map, fullText);
   let gpuInferred = false;
-  const form = classifyForm(product, map);
 
   // Apple 芯片是 SoC，没有独显这一说
   if (!gpu && cpu && /^M[1-9]/.test(cpu)) gpu = '核显';
@@ -404,6 +459,8 @@ export function extractSpecs(product) {
     cpu,
     gpu,
     gpuInferred,
+    // 显存：只有独立显卡这类配件才填，整机的"显存"没意义也解析不到
+    vram: form === 'gpu' ? parseVram(segs, map, fullText) : null,
     ram: parseRam(segs, map, fullText),
     disk: parseDisk(segs, map, fullText),
     weight: parseWeight(map),
