@@ -283,13 +283,73 @@ function parseYear(fullText, map) {
 /* ------------------------------------------------------------------ */
 /* 机型判定                                                             */
 /* ------------------------------------------------------------------ */
+/**
+ * 配件（单件硬件）的识别锚点。
+ *
+ * **必须在整机之前判定**，因为配件名字里普遍把 "Desktop"/"Laptop" 当兼容性描述用：
+ *   "AMD - Ryzen 5 5500 6-Core … Socket AM4 Processor"        ← 含 Processor
+ *   "Black Diamond - memory 16gb 288-pin pc ram ddr4 … desktop memory"
+ *   "WD - Blue 6TB PC Internal Hard Drive for Desktops"
+ * 原来的 /desktop|tower|…/ 会把这三种全认成台式机。
+ *
+ * 反过来也得防：锚点必须是配件**独有**的，不能把整机抢过来。
+ * 踩过的具体教训 ——
+ *  · `\bprocessor\b` 不能用：242 台真电脑里有 16 台名字含 "Intel Processor N150"
+ *  · `M.2 2280` 不能用：整机也写（"Acer Aspire XC … 512GB M.2 2280 PCIe"）
+ *  · `\bmemory\b` 不能用：几乎每台整机都写 "16GB Memory"
+ * 所以只留下 socket 型号、针脚数、DIMM、"Internal SSD" 这类产品名词。
+ */
+const COMPONENT_PATTERNS = [
+  ['gpu', /graphics card|video card/],
+  [
+    'cpu',
+    new RegExp(
+      [
+        'socket\\s?(?:am\\d|fm\\d|lga)',
+        'lga\\s?\\d{3,4}',
+        '\\bdesktop processor\\b',            // 产品名词，整机不会这么写
+        '\\d+[-\\s]?core\\s*[-–,]?\\s*\\d+[-\\s]?thread',   // 12-core - 24-thread / 12-core, 24-thread
+        '\\b\\d{1,2}c\\s*\\/?\\s*\\d{1,2}t\\b',             // EPYC 那种 "12C 24T" 简写
+        '\\b(?:hexa|octa|deca|dodeca|hexadeca|quad)[-\\s]?core\\b',
+      ].join('|')
+    ),
+  ],
+  ['ram', /\d{3}-pin|\bdimm\b|\bpc[45]\b|\bmemory ram\b|\budimm\b|\bsodimm\b/],
+  [
+    'ssd',
+    new RegExp(
+      [
+        // "Internal Gaming Hard Drive" 中间会插形容词，允许隔一两个词
+        'internal\\s+(?:\\w+\\s+){0,2}(?:ssd|hard drive|solid state)',
+        // 裸盘的名字是「品牌 - 容量 型号」，容量紧跟品牌；整机一定先写型号名。
+        // 实测：这个形态在 242 台整机里 0 命中，而 "nvme ssd"（紧邻）和
+        // "m.2 2280" 各命中 1 台整机，所以那两个都不能用。
+        '^[a-z ]+-\\s*\\d+(?:tb|gb)\\b(?=.*(?:ssd|nvme|hard drive|solid state))',
+      ].join('|')
+    ),
+  ],
+];
+
 export function classifyForm(product, map) {
   const t = `${product.name} ${product.category || ''} ${pick(map, 'product type') || ''}`.toLowerCase();
+
+  // 配件优先，理由见 COMPONENT_PATTERNS 上面的注释
+  for (const [form, re] of COMPONENT_PATTERNS) if (re.test(t)) return form;
+
   if (/all[-\s]?in[-\s]?one|\baio\b/.test(t)) return 'aio';
   if (/desktop|tower|mini pc|\bnuc\b|workstation/.test(t)) return 'desktop';
   if (/laptop|notebook|macbook|chromebook|ultrabook|2-in-1/.test(t)) return 'laptop';
+  // 显示器放在整机之后：整机名字里的分辨率/尺寸不会带 monitor 这个词
+  if (/\bmonitor\b|\bdisplay\b.*\b(?:hz|ips|va panel)\b/.test(t)) return 'monitor';
   if (/tablet|ipad/.test(t)) return 'tablet';
   return 'other';
+}
+
+/** 单件硬件（配件），和整机相对 */
+export const COMPONENT_FORMS = new Set(['gpu', 'cpu', 'ram', 'ssd', 'monitor']);
+
+export function isComponent(specs) {
+  return COMPONENT_FORMS.has(specs?.form);
 }
 
 /* ------------------------------------------------------------------ */
