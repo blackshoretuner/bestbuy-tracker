@@ -272,6 +272,9 @@ select.in { cursor: pointer; }
 .w-off   { width: 62px; }
 .w-pct   { width: 66px; }
 .w-act   { width: 46px; }
+/* 硬件榜：芯片型号（5070 Ti / RX 9070 XT）和显存（16G GDDR7） */
+.w-chip  { width: 92px; }
+.w-vram  { width: 96px; }
 
 /* 重量只写在商品详情页的规格表里，网页通道（默认通道）取不到。整榜都没有
    数据时把这一列收起来 —— 一整列 "·" 白占 62px。th 和 td 共用 .w-wt，
