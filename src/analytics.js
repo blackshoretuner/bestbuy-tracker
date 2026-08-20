@@ -224,7 +224,14 @@ export function crossSection(row, index, { minN = 5, maxAlts = 3 } = {}) {
       cheaper: peers
         .filter((p) => p.price < row.price && p.key !== row.key)
         .slice(0, maxAlts)
-        .map((p) => ({ key: p.key, sku: p.sku, name: p.specs?.shortName || p.name, price: p.price })),
+        // 带上零售商：跨家比价时"便宜的那个在哪家"才是能直接拿来用的信息
+        .map((p) => ({
+          key: p.key,
+          sku: p.sku,
+          retailer: p.retailer || 'bestbuy',
+          name: p.specs?.shortName || p.name,
+          price: p.price,
+        })),
     };
   }
   return null;

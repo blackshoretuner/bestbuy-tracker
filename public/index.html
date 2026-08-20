@@ -115,6 +115,8 @@
       <button data-v="ram">内存</button>
       <button data-v="ssd">固态/硬盘</button>
     </div>
+    <!-- 零售商按钮由 app.js 按 stats.retailers 动态生成；只有一家时整块隐藏 -->
+    <div class="seg" id="fHwShop" hidden></div>
     <input class="in w90" id="fHwMax" type="number" placeholder="价格上限">
     <label class="chk"><input type="checkbox" id="fHwStock" checked> 有货</label>
     <select class="in w130" id="fHwSort">
@@ -138,6 +140,7 @@
       <thead>
         <tr>
           <th class="w-sku">sku</th>
+          <th class="w-shop">商家</th>
           <th class="w-name">品牌 / 型号</th>
           <th class="w-chip">芯片</th>
           <th class="w-vram">显存</th>

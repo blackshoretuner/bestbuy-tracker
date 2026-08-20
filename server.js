@@ -216,12 +216,30 @@ route('GET', '/api/board', async (req, res, _p, query) => {
 
   let rows = allRows;
 
+  // 池子里各家各有多少 —— 前端据此决定要不要显示「商家」列（只有一家就别占宽度），
+  // 也用来动态生成零售商筛选按钮。必须在筛选之前统计，否则一按筛选按钮
+  // 其他家的计数就归零、按钮跟着消失。
+  const retailerCounts = {};
+  for (const r of allRows) {
+    const k = r.retailer || 'bestbuy';
+    retailerCounts[k] = (retailerCounts[k] || 0) + 1;
+  }
+
+  // 按商家筛选**只筛显示的行（rows），不筛 allRows** —— allRows 是拿来建同档索引的。
+  // 筛掉另一家的话，勾"只看 B&H"就变成只和 B&H 自己比价，跨零售商比价的意义全没了
+  //（用户想知道的恰恰是"这张 B&H 的卡相对整个市场贵不贵"）。
+  // 和 form / 价格那些行筛选同一个道理。
+  const wantRetailer = query.get('retailer');
+  if (wantRetailer && wantRetailer !== 'all') {
+    rows = rows.filter((r) => (r.retailer || 'bestbuy') === wantRetailer);
+  }
+
   const q = (query.get('q') || '').trim().toLowerCase();
   if (q) {
     const words = q.split(/\s+/);
     rows = rows.filter((r) => {
       const hay = [
-        r.name, r.sku, r.condition, r.manufacturer,
+        r.name, r.sku, r.condition, r.manufacturer, r.retailer,
         r.specs?.shortName, r.specs?.cpu, r.specs?.gpu, r.specs?.ram, r.specs?.disk,
       ].join(' ').toLowerCase();
       return words.every((w) => hay.includes(w));
@@ -272,6 +290,7 @@ route('GET', '/api/board', async (req, res, _p, query) => {
       // 统计的是**过滤前**的全榜，免得用户随手筛出几台没重量的就把整列收了。
       withWeight: allRows.filter((r) => r.specs?.weight).length,
       hiddenThirdParty,
+      retailers: retailerCounts,
     },
     rows: rows.slice(0, limit).map((r) => ({ ...r, watched: watched.has(r.key) })),
   });

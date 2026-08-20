@@ -281,6 +281,14 @@ select.in { cursor: pointer; }
    所以在表上切一个 class 就能一起收。换成 API 通道有数据了会自己回来。 */
 .grid.noWeight .w-wt { display: none; }
 
+/* 「商家」列。和重量列同一个思路：池子里只有一家零售商时收起来，别白占宽度
+   （由 app.js 的 applyShopColumn 按 stats.retailers 切 .noShop）。
+   th 和 td 共用 .w-shop，所以切表上一个 class 就能一起收。 */
+.w-shop { width: 74px; }
+.grid thead th.w-shop { text-align: left; }
+.grid td.shop { text-align: left; color: var(--fg-mute); font-size: 11px; }
+.grid.noShop .w-shop { display: none; }
+
 /* 历史记录的「跌幅」列装的是金额（-$330.00），比电脑榜那列的百分比（-42%）长得多，
    62px 会把每一行都截成省略号（实测 18/18 全中）。只加宽 #evTable 这一列：
    电脑榜的 off 仍是 62px，百分比够用，不白占宽度。

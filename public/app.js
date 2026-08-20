@@ -13,7 +13,7 @@ const state = {
   searches: [],
   board: [],
   boardFilters: { q: '', form: 'all', condition: 'all', maxPrice: '', onlyDrops: false, inStock: true, trueDeal: false, sort: 'deal' },
-  hwFilters: { q: '', form: 'all', maxPrice: '', inStock: true, sort: 'deal' },
+  hwFilters: { q: '', form: 'all', retailer: 'all', maxPrice: '', inStock: true, sort: 'deal' },
   evFilters: { q: '', type: 'drop,target', since: '', sort: 'recent' },
   editingSearch: null,
 };
@@ -136,6 +136,10 @@ function pctCell(pct, title) {
   return `<td class="pct ${bucket}" title="${esc(title || '')}">${pct}</td>`;
 }
 
+/* 零售商的显示名。内部一律用小写 id（bestbuy/bh），显示分开管，改文案不动数据。 */
+const SHOP_LABEL = { bestbuy: 'Best Buy', bh: 'B&H' };
+const shopLabel = (id) => SHOP_LABEL[id] || id || '?';
+
 function crossTitle(cross) {
   if (!cross) return '同档：样本不足，没法横向比';
   const bits = [
@@ -146,7 +150,11 @@ function crossTitle(cross) {
     bits.push(cross.vsMedian <= 0 ? `比中位便宜 $${money(-cross.vsMedian)}` : `比中位贵 $${money(cross.vsMedian)}`);
   }
   if (cross.cheaper?.length) {
-    bits.push('同档更便宜的：' + cross.cheaper.map((c) => `${c.name} $${money(c.price)}`).join('、'));
+    // 带上商家：跨零售商比价时，"便宜的那个在哪家"才是能直接拿去用的信息
+    bits.push(
+      '同档更便宜的：' +
+        cross.cheaper.map((c) => `${shopLabel(c.retailer)} ${c.name} $${money(c.price)}`).join('、')
+    );
   }
   return bits.join('\n');
 }
@@ -388,7 +396,7 @@ async function loadHardware() {
   const f = state.hwFilters;
   const qs = new URLSearchParams({
     kind: 'hardware',
-    q: f.q, form: f.form, sort: f.sort,
+    q: f.q, form: f.form, retailer: f.retailer, sort: f.sort,
     inStock: f.inStock ? '1' : '0',
     limit: '400',
   });
@@ -414,6 +422,7 @@ async function loadHardware() {
     }
     // 首次进页面也要对齐表头（默认「全部」用中性说法）
     applyHwHeadings(f.form);
+    applyShopColumn(st.retailers, $('#hwTable'), '#fHwShop');
     renderHardware(data.rows);
   } catch (e) {
     toast(e.message, 'err');
@@ -422,7 +431,7 @@ async function loadHardware() {
 
 function emptyHardwareMessage() {
   const f = state.hwFilters;
-  const filtered = f.q || f.maxPrice || f.form !== 'all';
+  const filtered = f.q || f.maxPrice || f.form !== 'all' || f.retailer !== 'all';
   if (filtered) {
     return `<b>当前筛选没有命中</b>硬件榜共 ${$('#cntHw').textContent} 件，放宽条件再试试`;
   }
@@ -457,6 +466,37 @@ const HW_HEADINGS = {
   ram: ['容量 / 类型', ''],
   ssd: ['容量', '接口'],
 };
+
+/**
+ * 「商家」列和零售商筛选按钮，都按池子里实际有几家来定：
+ * 只有一家时把列收起（别白占宽度）、按钮也不显示 —— 和重量列同一个思路。
+ * 计数来自 stats.retailers，那是**筛选之前**统计的，所以按了筛选按钮
+ * 其他家的计数不会归零、按钮不会自己消失。
+ */
+function applyShopColumn(counts, table, segSel) {
+  const shops = Object.keys(counts || {});
+  const multi = shops.length > 1;
+  table.classList.toggle('noShop', !multi);
+
+  const seg = document.querySelector(segSel);
+  if (!seg) return multi;
+  if (!multi) { seg.hidden = true; return false; }
+  seg.hidden = false;
+
+  const want = ['all', ...shops.sort()];
+  const have = [...seg.querySelectorAll('button')].map((b) => b.dataset.v);
+  // 只有集合变了才重建，否则会把用户当前选中的按钮状态冲掉
+  if (want.join() !== have.join()) {
+    const cur = state.hwFilters.retailer;
+    seg.innerHTML = want
+      .map((v) => {
+        const label = v === 'all' ? '全部' : `${shopLabel(v)} ${counts[v]}`;
+        return `<button data-v="${esc(v)}" class="${v === cur ? 'on' : ''}">${esc(label)}</button>`;
+      })
+      .join('');
+  }
+  return true;
+}
 
 function applyHwHeadings(form) {
   const [a, b] = HW_HEADINGS[form] || HW_HEADINGS.all;
@@ -498,6 +538,7 @@ function renderHardware(rows) {
 
     return `<tr class="${[dropped ? 'hit' : '', r.deal?.trueDeal ? 'trueDeal' : ''].filter(Boolean).join(' ')}" title="${esc(title)}">
       <td class="mono">${esc(r.sku)}</td>
+      <td class="w-shop shop">${esc(shopLabel(r.retailer))}</td>
       <td class="name"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(label)}</a>${condBadge(r.condition)}${r.thirdParty ? '<span class="badge third" title="Best Buy Marketplace 第三方卖家">三方</span>' : ''}${isLow ? '<span class="badge low">新低</span>' : ''}${r.inStock === false ? '<span class="badge oos">缺货</span>' : ''}</td>
       <td>${c1}</td>
       <td>${c2}</td>
@@ -532,6 +573,7 @@ $('#fHwMax').addEventListener('input', debounce((e) => { state.hwFilters.maxPric
 $('#fHwSort').addEventListener('change', (e) => { state.hwFilters.sort = e.target.value; loadHardware(); });
 $('#fHwStock').addEventListener('change', (e) => { state.hwFilters.inStock = e.target.checked; loadHardware(); });
 bindSeg('#fHwForm', (v) => { state.hwFilters.form = v; applyHwHeadings(v); loadHardware(); });
+bindSeg('#fHwShop', (v) => { state.hwFilters.retailer = v; loadHardware(); });
 
 /* ---------------- 历史记录 ---------------- */
 async function loadEvents() {
