@@ -83,23 +83,67 @@ export function vramGb(specs) {
  * 实测同一颗 5060 8G GDDR7 三个品牌价差 20%（$449.99 / $469.99 / $539.99），
  * 这种对比比"笔电·核显·16G"那种粗粒度分组有意义得多。
  */
+/**
+ * 配件的同档阶梯。比整机干净得多 —— 整机是"配置相近"的近似分组，
+ * 配件基本是**精确同款**：一张 RTX 5060 8G 就是 RTX 5060 8G。
+ * 每类的分组维度不一样，按"什么条件下才算可互换"来定：
+ *   显卡  芯片 + 显存（同芯片不同显存是两个产品）
+ *   CPU   型号（同型号就是同一颗）→ 退一层用 插槽 + 核心数
+ *   内存  容量 + 类型频率 → 退一层只看容量
+ *   硬盘  容量 + 接口（NVMe 和 SATA 完全不同价位段，绝不能混）→ 退一层只看容量
+ */
 function componentLadder(specs) {
   const form = specs.form;
+  const out = [];
+
   if (form === 'gpu') {
     const chip = specs.gpu;
     if (!chip) return [];
     const v = vramGb(specs);
-    const out = [];
     if (v) out.push({ level: 2, key: `gpu|${chip}|${v}`, label: `${chip} · ${v}G` });
     out.push({ level: 1, key: `gpu|${chip}`, label: String(chip) });
     return out;
   }
+
+  if (form === 'cpu') {
+    const model = specs.cpu;
+    const sock = specs.socket;
+    const c = specs.cores;
+    if (model) out.push({ level: 3, key: `cpu|${model}`, label: `CPU ${model}` });
+    if (sock && c) out.push({ level: 2, key: `cpu|${sock}|${c}`, label: `${sock} · ${c} 核` });
+    if (sock) out.push({ level: 1, key: `cpu|${sock}`, label: String(sock) });
+    return out;
+  }
+
+  if (form === 'ram') {
+    // ram 形如 "16G DDR4-2933"；容量和"类型频率"分开当两层
+    const m = String(specs.ram || '').match(/^(\d+)G(?:\s+(.+))?$/);
+    if (!m) return [];
+    const [, cap, kind] = m;
+    if (kind) out.push({ level: 2, key: `ram|${cap}|${kind}`, label: `内存 ${cap}G ${kind}` });
+    out.push({ level: 1, key: `ram|${cap}`, label: `内存 ${cap}G` });
+    return out;
+  }
+
+  if (form === 'ssd') {
+    const gb = diskGb(specs);
+    if (!gb) return [];
+    const bus = specs.bus;
+    if (bus) out.push({ level: 2, key: `ssd|${gb}|${bus}`, label: `${fmtDisk(gb)} ${bus}` });
+    out.push({ level: 1, key: `ssd|${gb}`, label: String(fmtDisk(gb)) });
+    return out;
+  }
+
   return [];
 }
 
+/* 配件走自己的阶梯。这里必须列全 —— 只转 gpu 的话，CPU/内存/硬盘会掉进
+   下面的整机分支，而整机分支要求 gpuTier 非空，配件拿不到分位就永远是"—"。 */
+const PART_LADDER_FORMS = new Set(['gpu', 'cpu', 'ram', 'ssd']);
+
 export function tierLadder(specs) {
   const form = specs?.form;
-  if (form === 'gpu') return componentLadder(specs);
+  if (PART_LADDER_FORMS.has(form)) return componentLadder(specs);
 
   const g = gpuTier(specs);
   const c = cpuTier(specs);

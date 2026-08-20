@@ -412,6 +412,8 @@ async function loadHardware() {
     } else {
       hint.hidden = true;
     }
+    // 首次进页面也要对齐表头（默认「全部」用中性说法）
+    applyHwHeadings(f.form);
     renderHardware(data.rows);
   } catch (e) {
     toast(e.message, 'err');
@@ -429,6 +431,38 @@ function emptyHardwareMessage() {
     `默认带了一条「显卡」自动搜索，但要等它跑过一轮才会有数据。<br>` +
     `点右上角 <code>立即查询</code>，或去「自动搜索」确认那条是启用状态`
   );
+}
+
+/**
+ * 硬件表的两个规格列，按品类填不同东西 —— 四类硬件的"关键规格"根本不是一回事：
+ *   显卡  芯片 / 显存        CPU   核心数 / 插槽
+ *   内存  容量类型 / —       硬盘  容量 / 接口
+ * 表头也跟着「类型」筛选变（见 hwHeadings）。
+ */
+function hwSpecCells(s) {
+  switch (s.form) {
+    case 'gpu': return [dash(s.gpu), dash(s.vram)];
+    case 'cpu': return [dash(s.cores ? `${s.cores} 核` : null), dash(s.socket)];
+    case 'ram': return [dash(s.ram), dash(null)];
+    case 'ssd': return [dash(s.disk), dash(s.bus)];
+    default: return [dash(null), dash(null)];
+  }
+}
+
+/* 「类型」筛选选中具体品类时，表头用该品类的说法；选「全部」时用中性说法。 */
+const HW_HEADINGS = {
+  all: ['规格', '规格 2'],
+  gpu: ['芯片', '显存'],
+  cpu: ['核心', '插槽'],
+  ram: ['容量 / 类型', ''],
+  ssd: ['容量', '接口'],
+};
+
+function applyHwHeadings(form) {
+  const [a, b] = HW_HEADINGS[form] || HW_HEADINGS.all;
+  const th = document.querySelectorAll('#hwTable thead th');
+  if (th[2]) th[2].textContent = a;
+  if (th[3]) th[3].textContent = b;
 }
 
 function renderHardware(rows) {
@@ -456,14 +490,17 @@ function renderHardware(rows) {
       histTitle(r.hist),
     ].filter(Boolean).join('  ·  ');
 
-    // 品牌单独显示：同一颗芯片的差价基本就是品牌/散热方案的差价
+    // 品牌单独显示：同一颗芯片的差价基本就是品牌/散热方案的差价。
+    // 通用内存条这类没有型号名（shortName 为 null），退回只显示品牌 —— 它们的
+    // 身份就是规格本身，规格在右边两列里。
     const label = [s.brand, s.shortName].filter(Boolean).join(' ') || r.name;
+    const [c1, c2] = hwSpecCells(s);
 
     return `<tr class="${[dropped ? 'hit' : '', r.deal?.trueDeal ? 'trueDeal' : ''].filter(Boolean).join(' ')}" title="${esc(title)}">
       <td class="mono">${esc(r.sku)}</td>
       <td class="name"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(label)}</a>${condBadge(r.condition)}${r.thirdParty ? '<span class="badge third" title="Best Buy Marketplace 第三方卖家">三方</span>' : ''}${isLow ? '<span class="badge low">新低</span>' : ''}${r.inStock === false ? '<span class="badge oos">缺货</span>' : ''}</td>
-      <td>${dash(s.gpu)}</td>
-      <td>${dash(s.vram)}</td>
+      <td>${c1}</td>
+      <td>${c2}</td>
       ${priceCell(r.regularPrice, r.price)}
       ${offCell(r.percentOff)}
       ${pctCell(r.cross?.pct, crossTitle(r.cross))}
@@ -494,7 +531,7 @@ $('#fHwQ').addEventListener('input', debounce((e) => { state.hwFilters.q = e.tar
 $('#fHwMax').addEventListener('input', debounce((e) => { state.hwFilters.maxPrice = e.target.value; loadHardware(); }, 350));
 $('#fHwSort').addEventListener('change', (e) => { state.hwFilters.sort = e.target.value; loadHardware(); });
 $('#fHwStock').addEventListener('change', (e) => { state.hwFilters.inStock = e.target.checked; loadHardware(); });
-bindSeg('#fHwForm', (v) => { state.hwFilters.form = v; loadHardware(); });
+bindSeg('#fHwForm', (v) => { state.hwFilters.form = v; applyHwHeadings(v); loadHardware(); });
 
 /* ---------------- 历史记录 ---------------- */
 async function loadEvents() {

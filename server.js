@@ -206,9 +206,12 @@ route('GET', '/api/board', async (req, res, _p, query) => {
     kind === 'hardware' ? isComponent(r.specs || {}) : !isComponent(r.specs || {})
   );
 
-  const hiddenThirdParty = store.getSettings().hideThirdParty
-    ? allRows.filter((r) => r.thirdParty).length
-    : 0;
+  // 同 tracker.js：「隐藏三方」只管整机。散装配件几乎全是 Marketplace
+  //（内存 100%、CPU 92%），在硬件页也照这条隐藏的话，收进来了照样看不见。
+  const hiddenThirdParty =
+    kind === 'computer' && store.getSettings().hideThirdParty
+      ? allRows.filter((r) => r.thirdParty).length
+      : 0;
   if (hiddenThirdParty) allRows = allRows.filter((r) => !r.thirdParty);
 
   let rows = allRows;

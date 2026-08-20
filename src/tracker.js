@@ -513,7 +513,13 @@ export class Tracker extends EventEmitter {
       if (max != null) products = products.filter((p) => p.price <= max);
       if (pct) products = products.filter((p) => (p.percentOff ?? 0) >= pct);
       if (search.onSaleOnly) products = products.filter((p) => p.onSale);
-      if (settings.hideThirdParty) products = products.filter((p) => !p.thirdParty);
+      // 「隐藏三方」只管整机。散装配件在 Best Buy 上几乎全是 Marketplace ——
+      // 实测内存 24/24 = 100%、CPU 22/24 = 92% 是三方，一刀切会把硬件板块清空
+      //（实测内存 40 件 → 0 件）。硬件照常收录，界面仍会标「三方」徽标，
+      // 退换货政策的取舍留给用户自己看。
+      if (settings.hideThirdParty && search.kind !== 'hardware') {
+        products = products.filter((p) => !p.thirdParty);
+      }
       if (search.condition === 'refurbished') products = products.filter((p) => /refurb/i.test(p.condition));
       if (search.condition === 'preowned') products = products.filter((p) => /pre-?owned/i.test(p.condition));
       if (search.channel === 'openbox') products = products.filter((p) => /open-?box/i.test(p.condition));

@@ -223,6 +223,71 @@ function parseVram(nameSegs, map, fullText) {
   return bare && Number(bare[1]) <= 48 ? `${bare[1]}G` : null;
 }
 
+/* ------------------------------------------------------------------ */
+/* CPU / 内存 / 硬盘 —— 散装配件专用                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 为什么不复用 parseRam / parseDisk：那两个是给**整机**写的，要求容量后面
+ * 紧跟关键词（`\d+GB\s+(Memory|RAM|SSD|…)`）。而裸条/裸盘中间夹着别的词：
+ *   "memory 16gb 288-pin pc ram ddr4 2400"   ← 16gb 后面是 288-pin
+ *   "990 PRO 2TB Internal SSD PCle Gen 4x4"  ← 2TB 后面是 Internal
+ * 实测这两种整机正则一个都匹配不上，所以配件另走一套。
+ */
+
+const CORE_WORDS = { quad: 4, hexa: 6, octa: 8, deca: 10, dodeca: 12, hexadeca: 16 };
+
+/** CPU 核心数。写法五花八门：8-Core / 12-core, / 12C 24T / Hexadeca-core */
+function parseCores(fullText) {
+  const t = String(fullText);
+  const m = t.match(/\b(\d{1,3})\s*[-\s]?core\b/i);
+  if (m && Number(m[1]) <= 256) return Number(m[1]);
+  const w = t.match(/\b(quad|hexa|octa|deca|dodeca|hexadeca)[-\s]?core\b/i);
+  if (w) return CORE_WORDS[w[1].toLowerCase()] ?? null;
+  const c = t.match(/\b(\d{1,3})c\s*\/?\s*\d{1,3}t\b/i);
+  return c ? Number(c[1]) : null;
+}
+
+/** CPU 插槽。同插槽才谈得上互换，是同档分组的关键维度。 */
+function parseSocket(fullText) {
+  const t = String(fullText);
+  const m = t.match(/\bsocket\s?(am\d\+?|fm\d\+?|tr\d)\b/i) || t.match(/\b(lga\s?\d{3,4})\b/i);
+  return m ? m[1].toUpperCase().replace(/\s+/g, ' ') : null;
+}
+
+/** 裸内存条：容量 + 类型/频率，例如 "16G DDR4-2400" */
+function parseRamStick(fullText) {
+  const t = String(fullText);
+  const cap = t.match(/\b(\d{1,3})\s?GB?\b/i);
+  if (!cap || Number(cap[1]) > 512) return null;
+  const type = t.match(/\b(DDR[345]|LPDDR[45]X?)\b/i);
+  // 频率有两种写法："ddr4 2400" 和 "(pc4 19200)"，取前者
+  const spd = t.match(/\bDDR[345]X?[-\s](\d{4})\b/i);
+  let out = `${cap[1]}G`;
+  if (type) out += ` ${type[1].toUpperCase()}`;
+  if (type && spd) out += `-${spd[1]}`;
+  return out;
+}
+
+/** 裸盘容量（统一成 GB 数） */
+function parseDriveGb(fullText) {
+  const t = String(fullText);
+  const tb = t.match(/\b(\d{1,2}(?:\.\d)?)\s?TB\b/i);
+  if (tb) return Number(tb[1]) * 1000;
+  const gb = t.match(/\b(\d{3,4})\s?GB\b/i);
+  return gb ? Number(gb[1]) : null;
+}
+
+/** 盘的接口。NVMe 和 SATA 是完全不同的价位段，必须分开比。 */
+function parseDriveBus(fullText) {
+  const t = String(fullText);
+  // Best Buy 有时把 PCIe 拼成 PCle（大写 i 和小写 L 撞脸），两种都认
+  if (/\bnvme\b|pc[il]e?\s*gen\s*\d/i.test(t)) return 'NVMe';
+  if (/\bsata\b/i.test(t)) return 'SATA';
+  if (/\bhdd\b|hard drive/i.test(t)) return 'HDD';
+  return null;
+}
+
 /* 显卡型号短名要去掉的噪声：芯片型号自己有一列，别在型号里重复一遍。 */
 const GPU_NOISE = [
   /\b(?:nvidia|amd|intel)\b/gi,
@@ -243,13 +308,64 @@ const GPU_NOISE = [
   /[-–—,]\s*$/,
 ];
 
+/* CPU / 内存 / 硬盘的短名噪声。同理：规格自己有列，型号里别重复。 */
+const CPU_NOISE = [
+  /\b(?:amd|intel)\b/gi,
+  /\b\d{1,3}\s*[-\s]?core\b|\b(?:quad|hexa|octa|deca|dodeca|hexadeca)[-\s]?core\b/gi,
+  /\b\d{1,3}\s*[-\s]?thread\b/gi,
+  /\b\d{1,3}c\s*\/?\s*\d{1,3}t\b/gi,
+  /\bsocket\s?(?:am\d\+?|fm\d\+?|tr\d)\b|\blga\s?\d{3,4}\b/gi,
+  /\([^)]*(?:boost|turbo|ghz)[^)]*\)/gi,
+  /\b[\d.]+\s?GHz(?:\s*\/\s*[\d.]+\s?GHz)?/gi,
+  /\b\d{1,3}W\b/gi,
+  /\b\d{1,3}MB\b/gi,
+  /\bdesktop processor\b|\bprocessor\b|\bcpu\b|\bretail\b|\bunlocked\b/gi,
+  /[-–—,]\s*$/,
+];
+const RAM_NOISE = [
+  /\b\d{1,3}\s?GB?\b/gi,
+  /\b(?:LP)?DDR[345]X?(?:[-\s]\d{4})?\b/gi,
+  /\bpc[45]\s?\d{4,5}\b/gi,
+  /\(\s*pc[45][^)]*\)/gi,
+  /\b\d{3}-pin\b|\b(?:so)?dimm\b|\budimm\b/gi,
+  /\bdesktop memory\b|\bmemory ram\b|\bmemory\b|\bram\b|\bmodule\b|\bkit\b/gi,
+  /[-–—,]\s*$/,
+];
+const SSD_NOISE = [
+  /\b\d{1,2}(?:\.\d)?\s?TB\b|\b\d{3,4}\s?GB\b/gi,
+  /\bnvme\b|\bsata(?:\s?iii)?\b|\bpc[il]e?\s*(?:gen\s*)?[\d.]+(?:\s*x\d+)?\b/gi,
+  /\bm\.?2\s?\d{4}\b|\b\d(?:\.\d)?"\b/gi,
+  /internal\s+(?:\w+\s+){0,2}(?:ssd|hard drive|solid state)/gi,
+  /\bssd\b|\bhard drive\b|\bsolid state\b|\bfor desktops?\b|\b\d{3}MB cache\b/gi,
+  /[-–—,]\s*$/,
+];
+
+const PART_NOISE = { gpu: GPU_NOISE, cpu: CPU_NOISE, ram: RAM_NOISE, ssd: SSD_NOISE };
+
+/* 四类配件都要剥的：总线/接口、颜色后缀。放通用表里免得每类各写一遍还漏。 */
+const COMMON_PART_NOISE = [
+  /\bPC[Il]e?\s*(?:Express\s*)?(?:Gen\s*)?[\d.]+(?:\s*x\d+)?/gi,
+  /\s*[-–—]?\s*\b(?:black|white|silver|gray|grey|blue|red|green|pink|titanium)\b\s*$/gi,
+];
+
 function shortComponentName(brand, fullName, form) {
   let s = fullName || '';
-  if (form === 'gpu') for (const re of GPU_NOISE) s = s.replace(re, ' ');
+  for (const re of [...(PART_NOISE[form] || []), ...COMMON_PART_NOISE]) s = s.replace(re, ' ');
   // 品牌已经单独一列
   if (brand) s = s.replace(new RegExp(`^\\s*${brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[-–—]?`, 'i'), ' ');
-  s = s.replace(/\s{2,}/g, ' ').replace(/^[\s,–—-]+|[\s,–—-]+$/g, '').trim();
-  return s.length >= 2 ? s.slice(0, 40) : null;
+  // 剥掉空括号和残余标点。内存这类"通用模块"往往没有型号名，剥完只剩
+  // "pc ( ) mo" 这种残渣，硬当型号显示反而更糊涂 —— 那就老实说没有，
+  // 让界面退回显示品牌 + 规格（规格本身就是这类商品的身份）。
+  s = s
+    .replace(/\(\s*\)/g, ' ')
+    .replace(/[()\[\]]/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\s,.–—-]+|[\s,.–—-]+$/g, '')
+    .trim();
+  // 去掉清洗后剩下的孤立短词（"pc"、"mo" 之类被切断的尾巴）
+  s = s.split(/\s+/).filter((w) => w.length >= 3 || /^\d+$/.test(w)).join(' ');
+  const letters = (s.match(/[a-z0-9]/gi) || []).length;
+  return letters >= 3 ? s.slice(0, 40) : null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -356,11 +472,20 @@ const COMPONENT_PATTERNS = [
     new RegExp(
       [
         'socket\\s?(?:am\\d|fm\\d|lga)',
-        'lga\\s?\\d{3,4}',
+        // 裸插槽名（没有 Socket 前缀）："… oc am4 tray processor" / "sTR5 350W"
+        // 实测 258 台整机 0 误伤
+        '\\b(?:am[45]\\+?|str[45]|fm2\\+?)\\b',
+        'lga[-\\s]?\\d{3,4}',
         '\\bdesktop processor\\b',            // 产品名词，整机不会这么写
+        '\\b(?:tray|boxed)\\s+processor\\b',  // 散片/盒装，整机 0 误伤
         '\\d+[-\\s]?core\\s*[-–,]?\\s*\\d+[-\\s]?thread',   // 12-core - 24-thread / 12-core, 24-thread
         '\\b\\d{1,2}c\\s*\\/?\\s*\\d{1,2}t\\b',             // EPYC 那种 "12C 24T" 简写
         '\\b(?:hexa|octa|deca|dodeca|hexadeca|quad)[-\\s]?core\\b',
+        // 英文词形核心数（"Eight-Core"），整机 0 误伤
+        '\\b(?:eight|nine|ten|twelve|sixteen|twenty|twentyfour)[-\\s]?core\\b',
+        // 核心数 + processor 同时出现。**不能只用裸 N-core** ——
+        // 实测误伤 14 台整机（"Snapdragon X (8-Core CPU)" 这类）。
+        '\\b\\d{1,3}\\s?-?core\\b[\\s\\S]*\\bprocessor\\b',
       ].join('|')
     ),
   ],
@@ -418,9 +543,12 @@ export function extractSpecs(product) {
   // （显卡的芯片型号自己有一列，不该再挤在型号里重复一遍）
   const form = classifyForm(product, map);
   const isPart = COMPONENT_FORMS.has(form);
-  const model =
-    (isPart ? shortComponentName(brand, fullName, form) : null) ||
-    shortModel(brand, segs.length > 1 ? segs[1] : segs[0], fullName);
+  // 配件清洗不出型号时**不要**回退到整机那套 —— 整机逻辑会把原始长名截一段
+  // 当型号（"memory 16gb 288-pin ram ddr4 2933 (pc4…"），比留空更糊涂。
+  // 通用内存条这类本来就没有型号名，规格本身就是它的身份，交给界面显示品牌+规格。
+  const model = isPart
+    ? shortComponentName(brand, fullName, form)
+    : shortModel(brand, segs.length > 1 ? segs[1] : segs[0], fullName);
   let cpu = parseCpu(segs, map, fullText);
   let gpu = parseGpu(segs, map, fullText);
   let gpuInferred = false;
@@ -446,12 +574,15 @@ export function extractSpecs(product) {
 
   return {
     brand: brand || null,
-    model: model || fullName,
+    model: isPart ? model : model || fullName,
     year,
     // 截图里的紧凑标题：型号 + 年份
     // 型号里已经带了年份就别再拼一次（"Yoga Slim 7x 2026 2026"），
     // 再截个长度，免得第三方卖家那种一长串关键词标题把表格撑爆
     shortName: (() => {
+      // 配件解析不出型号就给 null，别回退成原始长名（界面会显示品牌+规格）；
+      // 也不给配件拼年份 —— 一条内存的"2025"没有意义
+      if (isPart) return model ? (model.length > 46 ? model.slice(0, 45).trimEnd() + '…' : model) : null;
       const base = model || fullName;
       const withYear = year && !base.includes(year) ? `${base} ${year}` : base;
       return withYear.length > 46 ? withYear.slice(0, 45).trimEnd() + '…' : withYear;
@@ -461,8 +592,14 @@ export function extractSpecs(product) {
     gpuInferred,
     // 显存：只有独立显卡这类配件才填，整机的"显存"没意义也解析不到
     vram: form === 'gpu' ? parseVram(segs, map, fullText) : null,
-    ram: parseRam(segs, map, fullText),
-    disk: parseDisk(segs, map, fullText),
+    // 散装 CPU 才有核心数和插槽；整机的"核心数"不是买点，插槽更无从谈起
+    cores: form === 'cpu' ? parseCores(fullText) : null,
+    socket: form === 'cpu' ? parseSocket(fullText) : null,
+    // 盘的接口：NVMe 和 SATA 是完全不同的价位段，必须分开比
+    bus: form === 'ssd' ? parseDriveBus(fullText) : null,
+    // 裸条/裸盘走配件解析，整机仍走原来的（两者正则要求不同，见上面注释）
+    ram: form === 'ram' ? parseRamStick(fullText) || parseRam(segs, map, fullText) : parseRam(segs, map, fullText),
+    disk: form === 'ssd' ? fmtStorage(parseDriveGb(fullText)) || parseDisk(segs, map, fullText) : parseDisk(segs, map, fullText),
     weight: parseWeight(map),
     screen: parseScreen(segs, map, fullText),
     form,
