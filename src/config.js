@@ -104,6 +104,9 @@ export const DEFAULT_SETTINGS = {
   // 也保证用户删掉某条种子后不会在下次启动时又被塞回来。见 store.ensureSeedSearches()
   seededSearchIds: [],
 
+  // boardKey 是否已迁成带零售商的三段式。见 store.migrateRetailerKeys()
+  retailerKeysMigrated: false,
+
   // ---- 存储 ----
   priceHistoryDays: 180,
   keepObservationDays: 120,

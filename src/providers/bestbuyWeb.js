@@ -324,6 +324,7 @@ function normalize(r, source) {
     reviews: r.reviews ?? null,
     inStock: r.inStock !== false,
     source,
+    retailer: 'bestbuy',
     details: Array.isArray(r.details) ? r.details : [],
   };
   base.specs = extractSpecs(base);

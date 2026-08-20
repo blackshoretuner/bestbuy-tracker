@@ -697,6 +697,10 @@ server.listen(PORT, '127.0.0.1', () => {
   log.info(`Best Buy 降价雷达已启动 → ${url}`);
   log.info(`数据目录：${DATA_DIR}`);
   // 老用户升级上来时，用榜单里已有的首见价/现价给价格轨迹补个起点
+  // 老数据的 boardKey 迁成带零售商的三段式（board/pricelog/events 三处一起）
+  const mig = store.migrateRetailerKeys();
+  if (mig) log.info(`boardKey 已迁移带零售商：榜单 ${mig.movedRows} 行、价格点 ${mig.movedPoints} 个、事件 ${mig.movedEvents} 条`);
+
   // 升级上来的配置补种新种子（"显卡"这类后加的搜索）
   const seeded = store.ensureSeedSearches();
   if (seeded.length) log.info(`已补种新的自动搜索：${seeded.join('、')}`);

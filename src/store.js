@@ -118,6 +118,15 @@ class JsonlFile {
     this.rows = [];
     try { fs.writeFileSync(this.file, '', 'utf8'); } catch { /* ignore */ }
   }
+
+  /** 整体替换（迁移用：批量改键之后一次落盘，别 clear 再逐条 append） */
+  replaceAll(rows) {
+    this.rows = rows;
+    try { this.#rewrite(rows); } catch (e) {
+      log.error(`重写 ${path.basename(this.file)} 失败`, e.message);
+    }
+    return rows.length;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -328,8 +337,14 @@ export const store = {
   },
 
   /* ---- 电脑榜：每台机器一行的实时快照 ---- */
+  /**
+   * 榜单主键。**必须带零售商** —— Best Buy 的 SKU 是 7-8 位，
+   * Micro Center / Newegg 的商品 ID 位数完全重叠，不带零售商必然撞号，
+   * 两家的同一个号会在榜上互相覆盖、价格轨迹混成一锅。
+   * 缺 retailer 时兜底成 bestbuy，老数据和老 provider 都还能对上。
+   */
   boardKey(p) {
-    return `${p.sku}|${p.condition || 'New'}`;
+    return `${p.retailer || 'bestbuy'}|${p.sku}|${p.condition || 'New'}`;
   },
   /**
    * 写入一次观测。返回 { isNew, dropped, prevPrice, row }，
@@ -478,6 +493,61 @@ export const store = {
       this.updateSettings({ seededSearchIds: merged });
     }
     return added.map((s) => s.name);
+  },
+
+  /**
+   * 把老的两段式 boardKey（`sku|condition`）迁成带零售商的三段式
+   * （`retailer|sku|condition`）。
+   *
+   * 必须三处一起改：board.json 的键、pricelog 的 k、events 的 boardKey。
+   * 漏掉任何一处，"历史分位"和"旧价起于何时"就会因为对不上键而全部变成"—"。
+   * 只跑一次，靠 settings.retailerKeysMigrated 记录。
+   */
+  migrateRetailerKeys() {
+    if (this.getSettings().retailerKeysMigrated) return null;
+
+    const isOld = (k) => String(k).split('|').length === 2;
+    const upgrade = (k) => (isOld(k) ? `bestbuy|${k}` : k);
+
+    // 1) 榜单
+    const nextRows = {};
+    let movedRows = 0;
+    for (const [k, row] of Object.entries(boardFile.data.rows)) {
+      const nk = upgrade(k);
+      if (nk !== k) movedRows++;
+      nextRows[nk] = { ...row, key: nk, retailer: row.retailer || 'bestbuy' };
+    }
+    boardFile.data.rows = nextRows;
+    boardFile.flush();
+
+    // 2) 价格轨迹（内存索引和文件都要换）
+    let movedPoints = 0;
+    const nextLog = priceLog.rows.map((r) => {
+      if (!r?.k || !isOld(r.k)) return r;
+      movedPoints++;
+      return { ...r, k: upgrade(r.k) };
+    });
+    priceLog.replaceAll(nextLog);
+    priceIndex.clear();
+    for (const r of nextLog) {
+      if (!r?.k) continue;
+      let arr = priceIndex.get(r.k);
+      if (!arr) priceIndex.set(r.k, (arr = []));
+      arr.push({ t: r.t, p: r.p });
+    }
+    for (const arr of priceIndex.values()) arr.sort((a, b) => a.t - b.t);
+
+    // 3) 事件里的 boardKey（"旧价起于"靠它去 pricelog 里查）
+    let movedEvents = 0;
+    const nextEvents = events.rows.map((e) => {
+      if (!e?.boardKey || !isOld(e.boardKey)) return e;
+      movedEvents++;
+      return { ...e, boardKey: upgrade(e.boardKey) };
+    });
+    events.replaceAll(nextEvents);
+
+    this.updateSettings({ retailerKeysMigrated: true });
+    return { movedRows, movedPoints, movedEvents };
   },
 
   /** 榜单里已有的机器补上起点，别让"第一次装这个功能"的用户看到一片数据不足 */
