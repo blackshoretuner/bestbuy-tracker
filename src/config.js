@@ -213,5 +213,29 @@ export function seedSearches() {
       sort: 'salePrice.asc',
       limit: 60,
     }),
+    mk({
+      id: 'seed-cpu',
+      name: 'CPU',
+      kind: 'hardware',
+      keywords: 'cpu processor',
+      sort: 'salePrice.asc',
+      limit: 40,
+    }),
+    mk({
+      id: 'seed-ram',
+      name: '内存',
+      kind: 'hardware',
+      keywords: 'desktop memory ram',
+      sort: 'salePrice.asc',
+      limit: 40,
+    }),
+    mk({
+      id: 'seed-ssd',
+      name: '固态 / 硬盘',
+      kind: 'hardware',
+      keywords: 'internal ssd',
+      sort: 'salePrice.asc',
+      limit: 40,
+    }),
   ];
 }
