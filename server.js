@@ -16,7 +16,7 @@ import { pingScrape, scrapeProduct } from './src/providers/scrape.js';
 import { WebSession, pingWeb } from './src/providers/bestbuyWeb.js';
 import { findBrowser } from './src/browser/cdp.js';
 import { pingNotify } from './src/notify.js';
-import { isComputer, FORM_LABEL } from './src/specs.js';
+import { isComponent, isComputer, FORM_LABEL } from './src/specs.js';
 import { buildTierIndex, crossSection, dealScore, historyPercentile } from './src/analytics.js';
 import { csvEscape, getLogs, log, num, onLog, parseSkuFromInput } from './src/util.js';
 import { clearPidFile, newToken, writePidFile } from './src/instance.js';
@@ -127,6 +127,8 @@ const BOARD_SORTS = {
   gpu: (a, b) => gpuRank(b) - gpuRank(a),
   ram: (a, b) => ramGb(b) - ramGb(a),
   weight: (a, b) => (weightKg(a) ?? 99) - (weightKg(b) ?? 99),
+  // 硬件榜专用：显存最大 / 芯片最强（gpu 那个键对显卡同样适用）
+  vram: (a, b) => vramGb(b) - vramGb(a),
   // 没数据的排最后，别让"算不出来"的混在好价里。
   // 分数并列时（历史还没攒够时会大量并列在 70 分）依次用同档分位、价格兜底，
   // 保证每次刷新顺序一致，不要看着像在随机跳。
@@ -154,6 +156,9 @@ function ramGb(r) {
 function weightKg(r) {
   return num(String(r.specs?.weight || '').match(/([\d.]+)kg/)?.[1]);
 }
+function vramGb(r) {
+  return num(String(r.specs?.vram || '').match(/(\d+)G/)?.[1]) ?? 0;
+}
 
 /**
  * 给每一行算「同档分位」和「历史分位」。
@@ -166,7 +171,12 @@ function annotate(rows, allRows) {
   const now = Date.now();
 
   return rows.map((r) => {
-    const cross = crossSection(r, index, { minN: s.crossMinSamples || 5 });
+    // 硬件用更低的样本门槛：同一颗芯片+同显存是精确同款对比，
+    // 不像整机那样是"配置相近"的近似分组（见 config.js 的注释）
+    const minN = isComponent(r.specs || {})
+      ? s.crossMinSamplesHardware || 3
+      : s.crossMinSamples || 5;
+    const cross = crossSection(r, index, { minN });
     const hist = historyPercentile(store.pricesFor(r.key), r.price, {
       windowDays: s.histWindowDays || 90,
       minDays: s.histMinDays || 3,
@@ -188,6 +198,14 @@ route('GET', '/api/board', async (req, res, _p, query) => {
   // 挡不住改设置之前就已经收进榜的那些 —— 勾了以后界面上一台没少，看着像坏了。
   // 从"能看到的"和"拿来比价的"两处一起剔除：不打算买的机器，不该出现在
   // 同档分位的样本里，更不该被当成"同档更便宜的替代选项"推给用户。
+  // 整机榜和硬件榜是两个互不相干的池子。**先**按 kind 分池，再统计/剔除三方 ——
+  // 反过来的话，硬件页会显示整机那边的三方条数（实测显示"已隐藏三方 29"，
+  // 而硬件榜里一条三方都没有），计数和空态文案全跟着说错话。
+  const kind = query.get('kind') === 'hardware' ? 'hardware' : 'computer';
+  allRows = allRows.filter((r) =>
+    kind === 'hardware' ? isComponent(r.specs || {}) : !isComponent(r.specs || {})
+  );
+
   const hiddenThirdParty = store.getSettings().hideThirdParty
     ? allRows.filter((r) => r.thirdParty).length
     : 0;
@@ -486,7 +504,8 @@ route('GET', '/api/preview', async (req, res, _p, query) => {
     }
     if (query.get('onlyComputers') !== '0' && settings.onlyComputers) {
       const before = products.length;
-      products = products.filter((p) => isComputer(p.specs || {}));
+      const keep = query.get('kind') === 'hardware' ? isComponent : isComputer;
+      products = products.filter((p) => keep(p.specs || {}));
       meta.filteredOut = before - products.length;
     }
     json(res, { ok: true, products, meta });
@@ -675,6 +694,9 @@ server.listen(PORT, '127.0.0.1', () => {
   log.info(`Best Buy 降价雷达已启动 → ${url}`);
   log.info(`数据目录：${DATA_DIR}`);
   // 老用户升级上来时，用榜单里已有的首见价/现价给价格轨迹补个起点
+  // 升级上来的配置补种新种子（"显卡"这类后加的搜索）
+  const seeded = store.ensureSeedSearches();
+  if (seeded.length) log.info(`已补种新的自动搜索：${seeded.join('、')}`);
   const filled = store.backfillPriceLog();
   if (filled) log.info(`价格轨迹补录 ${filled} 个历史点`);
   // 同样别拿"没有 API Key"当问题——默认的浏览器通道本来就不需要它

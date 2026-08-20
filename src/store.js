@@ -290,6 +290,7 @@ export const store = {
       name: s.name || '未命名搜索',
       enabled: s.enabled !== false,
       channel: s.channel || 'api',        // api | openbox
+      kind: s.kind === 'hardware' ? 'hardware' : 'computer',   // 整机 or 单件硬件
       categoryId: s.categoryId || '',
       keywords: s.keywords || '',
       condition: s.condition || 'any',
@@ -452,6 +453,33 @@ export const store = {
     }
     return priceLog.prune((r) => r.t >= cutoff || keep.has(`${r.k}@${r.t}`));
   },
+  /**
+   * 给老配置补种新增的种子搜索。
+   *
+   * seedSearches() 只在 searches.json **不存在**时才跑，所以升级上来的用户
+   * 永远拿不到后来新加的种子（"显卡"就是这么漏的）。这里按 id 补齐，
+   * 并把处理过的 id 记进设置 —— 用户主动删掉之后不会又被塞回来。
+   */
+  ensureSeedSearches() {
+    const already = new Set(this.getSettings().seededSearchIds || []);
+    const have = new Set(searchFile.data.items.map((x) => x.id));
+    const added = [];
+    const seen = [];
+    for (const seed of seedSearches()) {
+      seen.push(seed.id);
+      if (have.has(seed.id) || already.has(seed.id)) continue;
+      searchFile.data.items.push(seed);
+      added.push(seed);
+    }
+    // 就算这次没补，也要把已存在的种子 id 记下来，否则用户删掉后下次又会冒出来
+    const merged = [...new Set([...already, ...seen])];
+    if (added.length || merged.length !== already.size) {
+      if (added.length) searchFile.flush();
+      this.updateSettings({ seededSearchIds: merged });
+    }
+    return added.map((s) => s.name);
+  },
+
   /** 榜单里已有的机器补上起点，别让"第一次装这个功能"的用户看到一片数据不足 */
   backfillPriceLog() {
     let added = 0;

@@ -8,7 +8,7 @@ import {
 } from './providers/bestbuyApi.js';
 import { scrapeProduct } from './providers/scrape.js';
 import { WebSession } from './providers/bestbuyWeb.js';
-import { isComputer } from './specs.js';
+import { isComponent, isComputer } from './specs.js';
 import { notifyDrops } from './notify.js';
 import { createLimiter, inQuietHours, log, money, sleep } from './util.js';
 
@@ -550,9 +550,13 @@ export class Tracker extends EventEmitter {
 
   #recordSearchResults(search, settings, products, meta, { record, notifiable }) {
     // 只留电脑：把配件、扩展坞、包、鼠标之类滤掉
+    // 按这条搜索找的是什么来过滤。以前是无条件只留整机，硬件搜索会被整个滤掉
+    //（实测显卡 20/20 全灭）。设置项名字还叫 onlyComputers 是为了不动已存的配置，
+    // 含义扩展成"只保留这条搜索的目标品类"。
     if (settings.onlyComputers) {
       const before = products.length;
-      products = products.filter((p) => isComputer(p.specs || {}));
+      const keep = search.kind === 'hardware' ? isComponent : isComputer;
+      products = products.filter((p) => keep(p.specs || {}));
       meta.filteredOut = before - products.length;
     }
 

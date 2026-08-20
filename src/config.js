@@ -93,9 +93,16 @@ export const DEFAULT_SETTINGS = {
   histMinDays: 3,
   // 同档横向对比至少要有几台样本才算数
   crossMinSamples: 5,
+  // 配件的门槛低一些：整机的"同档"是靠四级阶梯凑出来的近似分组（配置千差万别），
+  // 而"同一颗芯片 + 同样显存"是**精确同款**对比，3 张卡的价差就已经能说明问题。
+  crossMinSamplesHardware: 3,
   // "真好价" = 自身历史分位 ≤ 这个 且 同档分位 ≤ 下面那个
   trueDealHistPct: 15,
   trueDealCrossPct: 35,
+
+  // 已经补种过的种子搜索 id。升级时靠它判断哪些新种子还没给过用户，
+  // 也保证用户删掉某条种子后不会在下次启动时又被塞回来。见 store.ensureSeedSearches()
+  seededSearchIds: [],
 
   // ---- 存储 ----
   priceHistoryDays: 180,
@@ -133,6 +140,10 @@ export const CONDITIONS = [
 const searchDefaults = {
   enabled: true,
   channel: 'api',
+  // 这条搜索是找整机还是找单件硬件。决定结果怎么过滤（见 tracker.js）：
+  // computer 只留笔电/台式/一体机，hardware 只留显卡/CPU/内存/固态/显示器。
+  // 不给的话默认 computer —— 老的搜索配置读上来行为完全不变。
+  kind: 'computer',
   keywords: '',
   condition: 'any',
   minPrice: null,
@@ -187,6 +198,18 @@ export function seedSearches() {
       channel: 'openbox',
       categoryId: 'abcat0500000',
       condition: 'openbox',
+      sort: 'salePrice.asc',
+      limit: 60,
+    }),
+    // 硬件：只给关键词、不给 categoryId。
+    // 网页通道本来就是把 categoryId 映射成关键词去搜的（见 bestbuyWeb.js 的
+    // CATEGORY_TERMS），而配件的 Best Buy 分类 ID 没有 API Key 没法查证，
+    // 与其写一个猜的 ID，不如直接用关键词 —— 实测 "graphics card" 命中率 20/20。
+    mk({
+      id: 'seed-gpu',
+      name: '显卡',
+      kind: 'hardware',
+      keywords: 'graphics card',
       sort: 'salePrice.asc',
       limit: 60,
     }),

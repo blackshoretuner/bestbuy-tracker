@@ -70,8 +70,37 @@ const FORM_LABEL = { laptop: '笔电', desktop: '台式', aio: '一体机' };
  * 从细到粗的分组阶梯。取样本量够的最细一层。
  * 每一层都带 label，UI 要让用户看见"到底跟谁比的"。
  */
+/** 显存容量（GB）。"16G GDDR7" → 16 */
+export function vramGb(specs) {
+  return num(String(specs?.vram || '').match(/(\d+)G/)?.[1]);
+}
+
+/**
+ * 单件硬件的分档阶梯。
+ *
+ * 比整机干净得多：一张 RTX 5060 8G 就是 RTX 5060 8G，不同品牌之间是**天然同档**，
+ * 不需要像整机那样靠 form|gpu|ram|disk 四级去凑近似样本。
+ * 实测同一颗 5060 8G GDDR7 三个品牌价差 20%（$449.99 / $469.99 / $539.99），
+ * 这种对比比"笔电·核显·16G"那种粗粒度分组有意义得多。
+ */
+function componentLadder(specs) {
+  const form = specs.form;
+  if (form === 'gpu') {
+    const chip = specs.gpu;
+    if (!chip) return [];
+    const v = vramGb(specs);
+    const out = [];
+    if (v) out.push({ level: 2, key: `gpu|${chip}|${v}`, label: `${chip} · ${v}G` });
+    out.push({ level: 1, key: `gpu|${chip}`, label: String(chip) });
+    return out;
+  }
+  return [];
+}
+
 export function tierLadder(specs) {
   const form = specs?.form;
+  if (form === 'gpu') return componentLadder(specs);
+
   const g = gpuTier(specs);
   const c = cpuTier(specs);
   const r = ramGb(specs);
@@ -247,7 +276,10 @@ export function historyPercentile(points, price, opts = {}) {
  */
 export function dealScore(cross, hist) {
   const hasHist = hist?.enough && hist.pct != null;
-  const hasCross = cross && cross.n >= 5;
+  // crossSection 内部已经按 minN 卡过样本量了，返回非空就说明够。
+  // 这里原本又硬编码了一次 >= 5 —— 对整机恒成立所以看不出问题，
+  // 但硬件用的是更低的阈值（同一颗芯片天然只有两三张卡），会被这行误杀。
+  const hasCross = !!cross;
   if (!hasHist && !hasCross) return null;
 
   if (hasHist && hasCross) {

@@ -34,6 +34,7 @@
 
 <nav class="tabs" id="tabs">
   <button class="tab active" data-tab="board">电脑榜 <em id="cntBoard">0</em></button>
+  <button class="tab" data-tab="hardware">硬件 <em id="cntHw">0</em></button>
   <button class="tab" data-tab="history">历史记录 <em id="cntEvents">0</em></button>
   <button class="tab" data-tab="watch">关注 <em id="cntWatch">0</em></button>
   <button class="tab" data-tab="searches">自动搜索 <em id="cntSearch">0</em></button>
@@ -100,6 +101,53 @@
       <tbody id="boardBody"></tbody>
     </table>
     <div class="empty" id="boardEmpty" hidden></div>
+  </div>
+</section>
+
+<!-- ================= 硬件 ================= -->
+<section class="panel" id="panel-hardware">
+  <div class="filters">
+    <input class="in grow" id="fHwQ" placeholder="搜芯片 / 品牌 / 型号…  例：5070 ti">
+    <div class="seg" id="fHwForm">
+      <button data-v="all" class="on">全部</button>
+      <button data-v="gpu">显卡</button>
+    </div>
+    <input class="in w90" id="fHwMax" type="number" placeholder="价格上限">
+    <label class="chk"><input type="checkbox" id="fHwStock" checked> 有货</label>
+    <select class="in w130" id="fHwSort">
+      <option value="deal">值不值 ↓</option>
+      <option value="cross">同档最便宜</option>
+      <option value="hist">历史低位</option>
+      <option value="price">价格 ↑</option>
+      <option value="-price">价格 ↓</option>
+      <option value="gpu">芯片最强</option>
+      <option value="vram">显存最大</option>
+      <option value="recent">最近降价</option>
+    </select>
+    <span class="grow-sp"></span>
+    <span class="count" id="hwCount"></span>
+  </div>
+
+  <div class="noteBar" id="hwHint" hidden></div>
+
+  <div class="tableWrap">
+    <table class="grid" id="hwTable">
+      <thead>
+        <tr>
+          <th class="w-sku">sku</th>
+          <th class="w-name">品牌 / 型号</th>
+          <th class="w-chip">芯片</th>
+          <th class="w-vram">显存</th>
+          <th class="w-price">price</th>
+          <th class="w-off">off</th>
+          <th class="w-pct" title="同一颗芯片 + 同显存的卡现在都卖多少，这张排第几。越低越划算">同档</th>
+          <th class="w-pct" title="当前价在它自己过去 90 天价格分布里的位置（按时间加权）">历史</th>
+          <th class="w-act"></th>
+        </tr>
+      </thead>
+      <tbody id="hwBody"></tbody>
+    </table>
+    <div class="empty" id="hwEmpty" hidden></div>
   </div>
 </section>
 

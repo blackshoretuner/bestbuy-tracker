@@ -13,6 +13,7 @@ const state = {
   searches: [],
   board: [],
   boardFilters: { q: '', form: 'all', condition: 'all', maxPrice: '', onlyDrops: false, inStock: true, trueDeal: false, sort: 'deal' },
+  hwFilters: { q: '', form: 'all', maxPrice: '', inStock: true, sort: 'deal' },
   evFilters: { q: '', type: 'drop,target', since: '', sort: 'recent' },
   editingSearch: null,
 };
@@ -184,6 +185,7 @@ $('#tabs').addEventListener('click', (e) => {
 
 function refreshTab() {
   if (state.tab === 'board') loadBoard();
+  else if (state.tab === 'hardware') loadHardware();
   else if (state.tab === 'history') loadEvents();
   else if (state.tab === 'watch') loadWatch();
   else if (state.tab === 'searches') renderSearches();
@@ -375,6 +377,124 @@ function debounce(fn, ms) {
   let t;
   return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
+
+/* ---------------- 硬件 ---------------- */
+/**
+ * 硬件榜。和电脑榜共用 /api/board（只是带上 kind=hardware），
+ * 分位、评分、关注那套逻辑完全复用 —— 差别只在展示哪几列：
+ * 整机看 cpu/gpu/ram/disk，配件看芯片/显存。
+ */
+async function loadHardware() {
+  const f = state.hwFilters;
+  const qs = new URLSearchParams({
+    kind: 'hardware',
+    q: f.q, form: f.form, sort: f.sort,
+    inStock: f.inStock ? '1' : '0',
+    limit: '400',
+  });
+  if (f.maxPrice) qs.set('maxPrice', f.maxPrice);
+
+  try {
+    const data = await api(`/api/board?${qs}`);
+    state.hwStats = data.stats || {};
+    $('#cntHw').textContent = data.total;
+    const st = data.stats || {};
+    $('#hwCount').textContent =
+      `${data.rows.length} / ${data.total} 件` +
+      (data.total ? ` · 同档可比 ${st.withCross ?? 0} · 有历史 ${st.withHist ?? 0} · 真好价 ${st.trueDeals ?? 0}` : '');
+
+    const hint = $('#hwHint');
+    if (data.total && !st.withHist) {
+      hint.hidden = false;
+      hint.innerHTML =
+        '「历史」列还是空的：需要至少 <b>3 天</b>跟踪且价格<b>确实变动过</b>。' +
+        '先看「同档」—— 同一颗芯片、同显存的卡互相比价，那一列现在就能用。';
+    } else {
+      hint.hidden = true;
+    }
+    renderHardware(data.rows);
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+function emptyHardwareMessage() {
+  const f = state.hwFilters;
+  const filtered = f.q || f.maxPrice || f.form !== 'all';
+  if (filtered) {
+    return `<b>当前筛选没有命中</b>硬件榜共 ${$('#cntHw').textContent} 件，放宽条件再试试`;
+  }
+  return (
+    `<b>硬件榜还是空的</b>` +
+    `默认带了一条「显卡」自动搜索，但要等它跑过一轮才会有数据。<br>` +
+    `点右上角 <code>立即查询</code>，或去「自动搜索」确认那条是启用状态`
+  );
+}
+
+function renderHardware(rows) {
+  const body = $('#hwBody');
+  const empty = $('#hwEmpty');
+  if (!rows.length) {
+    body.innerHTML = '';
+    empty.hidden = false;
+    empty.innerHTML = emptyHardwareMessage();
+    return;
+  }
+  empty.hidden = true;
+
+  const fresh = Date.now() - 86400000;
+  body.innerHTML = rows.map((r) => {
+    const s = r.specs || {};
+    const dropped = r.lastDropAt && r.lastDropAt > fresh;
+    const isLow = isNewLow(r);
+    const title = [
+      r.name,
+      r.prevPrice != null && r.prevPrice !== r.price ? `上次 $${money(r.prevPrice)}` : '',
+      r.minPrice != null ? `跟踪最低 $${money(r.minPrice)}` : '',
+      `首次发现 ${relTime(r.firstSeenAt)}`,
+      crossTitle(r.cross),
+      histTitle(r.hist),
+    ].filter(Boolean).join('  ·  ');
+
+    // 品牌单独显示：同一颗芯片的差价基本就是品牌/散热方案的差价
+    const label = [s.brand, s.shortName].filter(Boolean).join(' ') || r.name;
+
+    return `<tr class="${[dropped ? 'hit' : '', r.deal?.trueDeal ? 'trueDeal' : ''].filter(Boolean).join(' ')}" title="${esc(title)}">
+      <td class="mono">${esc(r.sku)}</td>
+      <td class="name"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(label)}</a>${condBadge(r.condition)}${r.thirdParty ? '<span class="badge third" title="Best Buy Marketplace 第三方卖家">三方</span>' : ''}${isLow ? '<span class="badge low">新低</span>' : ''}${r.inStock === false ? '<span class="badge oos">缺货</span>' : ''}</td>
+      <td>${dash(s.gpu)}</td>
+      <td>${dash(s.vram)}</td>
+      ${priceCell(r.regularPrice, r.price)}
+      ${offCell(r.percentOff)}
+      ${pctCell(r.cross?.pct, crossTitle(r.cross))}
+      ${pctCell(r.hist?.enough ? r.hist.pct : null, histTitle(r.hist))}
+      <td><button class="rowBtn ${r.watched ? 'on' : ''}" data-watch="${esc(r.key)}" title="${r.watched ? '已在关注列表' : '加入关注'}">${r.watched ? '★' : '☆'}</button></td>
+    </tr>`;
+  }).join('');
+}
+
+// 关注按钮和电脑榜同一套处理
+$('#hwBody').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-watch]');
+  if (!btn) return;
+  btn.disabled = true;
+  try {
+    const r = await api('/api/watch', { method: 'POST', body: { boardKey: btn.dataset.watch } });
+    btn.classList.add('on');
+    btn.textContent = '★';
+    toast(r.created ? `已关注：${r.item.name.slice(0, 40)}` : '这件已经在关注列表里了', 'ok');
+    loadCounts();
+  } catch (err) {
+    toast(err.message, 'err');
+    btn.disabled = false;
+  }
+});
+
+$('#fHwQ').addEventListener('input', debounce((e) => { state.hwFilters.q = e.target.value; loadHardware(); }, 250));
+$('#fHwMax').addEventListener('input', debounce((e) => { state.hwFilters.maxPrice = e.target.value; loadHardware(); }, 350));
+$('#fHwSort').addEventListener('change', (e) => { state.hwFilters.sort = e.target.value; loadHardware(); });
+$('#fHwStock').addEventListener('change', (e) => { state.hwFilters.inStock = e.target.checked; loadHardware(); });
+bindSeg('#fHwForm', (v) => { state.hwFilters.form = v; loadHardware(); });
 
 /* ---------------- 历史记录 ---------------- */
 async function loadEvents() {
