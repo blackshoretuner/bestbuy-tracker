@@ -8,6 +8,7 @@ import {
 } from './providers/bestbuyApi.js';
 import { scrapeProduct } from './providers/scrape.js';
 import { WebSession } from './providers/bestbuyWeb.js';
+import { BhSession } from './providers/bhWeb.js';
 import { isComponent, isComputer } from './specs.js';
 import { notifyDrops } from './notify.js';
 import { createLimiter, inQuietHours, log, money, sleep } from './util.js';
@@ -171,6 +172,7 @@ export class Tracker extends EventEmitter {
       });
     } finally {
       if (session) await session.close().catch(() => {});
+      await this.#closeExtraSessions();
     }
 
     // 通知
@@ -437,16 +439,38 @@ export class Tracker extends EventEmitter {
   /* ---------------------------------------------------------------- */
   /* 自动搜索：把数码区符合条件的降价直接写进历史记录                      */
   /* ---------------------------------------------------------------- */
+  /** B&H 的 session 按需开、整轮共用；轮次结束由 #closeExtraSessions 收摊 */
+  async #bhSession(settings) {
+    if (!this._bh) this._bh = new BhSession(settings);
+    return this._bh;
+  }
+
+  async #closeExtraSessions() {
+    if (this._bh) {
+      await this._bh.close().catch(() => {});
+      this._bh = null;
+    }
+  }
+
   async #runSearches(settings, notifiable, session) {
     const out = { discovered: 0, searchesRun: 0, drops: 0, errors: [] };
     const searches = store.listSearches().filter((s) => s.enabled !== false);
     if (!searches.length) return out;
+
+    // B&H 的搜索不依赖 Best Buy 的通道，别被下面那个"没有可用通道"挡住
+    const onlyBh = searches.every((s) => s.retailer === 'bh');
+    if (onlyBh) return this.#runSearchList(searches, settings, notifiable, session, out);
 
     if (!session && !usesApi(settings)) {
       out.errors.push('没有可用的数据通道：去「设置」把通道选成「浏览器」，或者填入 API Key');
       return out;
     }
 
+    return this.#runSearchList(searches, settings, notifiable, session, out);
+  }
+
+  /** 跑一批搜索。抽出来是为了让"全是 B&H"的情况能跳过 Best Buy 的通道检查。 */
+  async #runSearchList(searches, settings, notifiable, session, out) {
     for (const search of searches) {
       try {
         const res = await this.runSearchOnce(search, settings, { record: true, notifiable, session });
@@ -475,16 +499,21 @@ export class Tracker extends EventEmitter {
     let meta = {};
 
     // 没传 session 但需要浏览器（比如从界面上点"立即运行"），临时开一个
+    // B&H 的搜索用不着 Best Buy 的 session，别白开一个浏览器
     let ownSession = null;
-    if (!session && usesWeb(settings)) {
+    if (!session && usesWeb(settings) && search.retailer !== 'bh') {
       ownSession = new WebSession(settings);
       session = ownSession;
     }
+
+    // 单独运行一条 B&H 搜索（界面上点「立即运行」）时，用完就地关掉
+    const ownBh = search.retailer === 'bh' && !this._bh;
 
     try {
       ({ products, meta } = await this.#fetchForSearch(search, settings, limit, session));
     } finally {
       if (ownSession) await ownSession.close().catch(() => {});
+      if (ownBh) await this.#closeExtraSessions();
     }
 
     return this.#recordSearchResults(search, settings, products, meta, { record, notifiable });
@@ -493,6 +522,27 @@ export class Tracker extends EventEmitter {
   async #fetchForSearch(search, settings, limit, session) {
     let products = [];
     let meta = {};
+
+    // B&H 走自己的 provider：URL、卡片结构、价格写法和 Best Buy 完全不同
+    //（B&H 把现价的整数和小数拆成两个元素，详见 bhWeb.js 的注释）。
+    // 每个零售商一个 session，整轮共用，不为每条搜索反复开浏览器。
+    if (search.retailer === 'bh') {
+      const bh = await this.#bhSession(settings);
+      products = await bh.search({
+        part: search.part || 'gpu',
+        keywords: search.keywords || '',
+        limit,
+        maxPages: settings.maxPagesPerSearch || 3,
+      });
+      meta = { channel: 'bh-web', retailer: 'bh', fetched: products.length };
+      const min = search.minPrice;
+      const max = search.maxPrice;
+      if (min != null) products = products.filter((p) => p.price >= min);
+      if (max != null) products = products.filter((p) => p.price <= max);
+      if (search.minPercentOff) products = products.filter((p) => (p.percentOff ?? 0) >= search.minPercentOff);
+      meta.afterFilter = products.length;
+      return { products, meta };
+    }
 
     // 浏览器通道优先（provider=web 时 session 一定存在）
     if (session) {

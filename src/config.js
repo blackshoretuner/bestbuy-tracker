@@ -147,6 +147,11 @@ const searchDefaults = {
   // computer 只留笔电/台式/一体机，hardware 只留显卡/CPU/内存/固态/显示器。
   // 不给的话默认 computer —— 老的搜索配置读上来行为完全不变。
   kind: 'computer',
+  // 去哪家查。bestbuy 走 bestbuyWeb，bh 走 bhWeb（各自的 URL/卡片/价格写法完全不同）。
+  // 不给的话默认 bestbuy —— 老的搜索配置读上来行为完全不变。
+  retailer: 'bestbuy',
+  // B&H 用分类页而不是关键词，part 指明品类（gpu/cpu/ram/ssd）
+  part: null,
   keywords: '',
   condition: 'any',
   minPrice: null,
@@ -240,5 +245,10 @@ export function seedSearches() {
       sort: 'salePrice.asc',
       limit: 40,
     }),
+    // ---- B&H：同一件配件在两家的比价，才是值不值最硬的证据 ----
+    mk({ id: 'seed-bh-gpu', name: 'B&H · 显卡', kind: 'hardware', retailer: 'bh', part: 'gpu', limit: 40 }),
+    mk({ id: 'seed-bh-cpu', name: 'B&H · CPU', kind: 'hardware', retailer: 'bh', part: 'cpu', limit: 40 }),
+    mk({ id: 'seed-bh-ram', name: 'B&H · 内存', kind: 'hardware', retailer: 'bh', part: 'ram', limit: 40 }),
+    mk({ id: 'seed-bh-ssd', name: 'B&H · 固态', kind: 'hardware', retailer: 'bh', part: 'ssd', limit: 40 }),
   ];
 }

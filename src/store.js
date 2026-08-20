@@ -300,6 +300,8 @@ export const store = {
       enabled: s.enabled !== false,
       channel: s.channel || 'api',        // api | openbox
       kind: s.kind === 'hardware' ? 'hardware' : 'computer',   // 整机 or 单件硬件
+      retailer: s.retailer === 'bh' ? 'bh' : 'bestbuy',        // 去哪家查
+      part: s.part || null,                                     // B&H 用分类页，指明品类
       categoryId: s.categoryId || '',
       keywords: s.keywords || '',
       condition: s.condition || 'any',
@@ -366,6 +368,10 @@ export const store = {
     const row = {
       key,
       sku: p.sku,
+      // 零售商既进主键也要**存进行里** —— 界面要按它分列/筛选。
+      // 漏了这个字段会让新入榜的行 retailer=undefined（迁移补过的老行反而有），
+      // 界面上就成了一半有一半没有。
+      retailer: p.retailer || old?.retailer || 'bestbuy',
       name: p.name,
       url: p.url,
       image: p.image,
@@ -548,6 +554,23 @@ export const store = {
 
     this.updateSettings({ retailerKeysMigrated: true });
     return { movedRows, movedPoints, movedEvents };
+  },
+
+  /**
+   * 给缺 retailer 的榜单行补上。键的第一段就是零售商，直接回填。
+   * 每次启动都跑（很便宜、幂等）—— 早期版本的 upsertBoard 漏存这个字段，
+   * 导致新入榜的行没有而迁移过的老行有，界面上一半有一半没有。
+   */
+  backfillRetailer() {
+    let fixed = 0;
+    for (const [key, row] of Object.entries(boardFile.data.rows)) {
+      if (row.retailer) continue;
+      const seg = String(key).split('|');
+      row.retailer = seg.length >= 3 ? seg[0] : 'bestbuy';
+      fixed++;
+    }
+    if (fixed) boardFile.flush();
+    return fixed;
   },
 
   /** 榜单里已有的机器补上起点，别让"第一次装这个功能"的用户看到一片数据不足 */

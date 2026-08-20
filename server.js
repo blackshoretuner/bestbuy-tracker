@@ -704,6 +704,8 @@ server.listen(PORT, '127.0.0.1', () => {
   // 升级上来的配置补种新种子（"显卡"这类后加的搜索）
   const seeded = store.ensureSeedSearches();
   if (seeded.length) log.info(`已补种新的自动搜索：${seeded.join('、')}`);
+  const fixedRetailer = store.backfillRetailer();
+  if (fixedRetailer) log.info(`补上 ${fixedRetailer} 行缺失的零售商标记`);
   const filled = store.backfillPriceLog();
   if (filled) log.info(`价格轨迹补录 ${filled} 个历史点`);
   // 同样别拿"没有 API Key"当问题——默认的浏览器通道本来就不需要它
