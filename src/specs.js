@@ -127,7 +127,9 @@ function parseGpu(nameSegs, map, fullText) {
   const source = [seg, explicit, fullText].filter(Boolean).join(' ');
 
   // NVIDIA RTX/GTX：只留数字 + Ti/Super，和截图里的风格一致
-  const nv = source.match(/\b(?:RTX|GTX)\s*(\d{4})\s*(Ti\s*Super|Super|Ti)?/i);
+  // 允许型号和数字之间夹商标符号：Amazon 的标题写成 "GeForce RTX™ 5080"，
+  // 不放过 ™/® 的话这类卡的芯片会认不出来（实测漏掉 RTX™ 5080）
+  const nv = source.match(/\b(?:RTX|GTX)[™®\s]*(\d{4})\s*(Ti\s*Super|Super|Ti)?/i);
   if (nv) {
     const suffix = nv[2]
       ? ' ' + nv[2].toLowerCase().replace(/\s+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
