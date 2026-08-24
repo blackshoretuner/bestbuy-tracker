@@ -447,26 +447,30 @@ export class Tracker extends EventEmitter {
    * 非 Best Buy 的零售商各有自己的 provider，session 按需开、整轮共用
    *（开一次浏览器要好几秒，不值得每条搜索都开）。轮次结束统一收摊。
    */
-  async #extSession(retailer, settings) {
-    const slot = retailer === 'amazon' ? '_amz' : '_bh';
-    if (!this[slot]) {
-      this[slot] = retailer === 'amazon' ? new AmazonSession(settings) : new BhSession(settings);
-    }
-    return this[slot];
+  /**
+   * 外部零售商（B&H / Amazon）的 session 装在一个「袋子」里，**跟着调用方走**，
+   * 不挂在 this 上。
+   *
+   * 为什么不用共享槽位：踩过一次 —— 定时轮次和界面上「立即运行」会同时进行，
+   * 两边共用 this._bh / this._amz 的话，轮次结束时的收摊会把手动那次
+   * 正在用的浏览器关掉，日志里就是 "Amazon 第 1 页失败：浏览器已关闭"。
+   * 袋子由谁创建谁负责关，天然不会互相踩。
+   */
+  static #newBag() {
+    return new Map();
   }
 
-  async #closeExtraSessions() {
-    for (const slot of ['_bh', '_amz']) {
-      if (this[slot]) {
-        await this[slot].close().catch(() => {});
-        this[slot] = null;
-      }
+  async #bagSession(bag, retailer, settings) {
+    if (!bag.has(retailer)) {
+      bag.set(retailer, retailer === 'amazon' ? new AmazonSession(settings) : new BhSession(settings));
     }
+    return bag.get(retailer);
   }
 
-  /** 本轮有没有开着任何外部零售商的浏览器 */
-  #hasExtSession() {
-    return !!(this._bh || this._amz);
+  async #closeBag(bag) {
+    if (!bag) return;
+    for (const sess of bag.values()) await sess.close().catch(() => {});
+    bag.clear();
   }
 
   async #runSearches(settings, notifiable, session) {
