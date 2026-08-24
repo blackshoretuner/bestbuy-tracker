@@ -294,7 +294,7 @@ function parseDriveBus(fullText) {
 const GPU_NOISE = [
   /\b(?:nvidia|amd|intel)\b/gi,
   /\bgeforce\b|\bradeon\b|\barc\b/gi,
-  /\b(?:RTX|GTX|RX)\s*\d{3,4}\s*(?:Ti\s*Super|Super|Ti|XTX|XT)?/gi,
+  /\b(?:RTX|GTX|RX)[™®\s]*\d{3,4}\s*(?:Ti\s*Super|Super|Ti|XTX|XT)?/gi,
   // 接口要在容量之前删：不然 "PCI Express Gen 5" 里的 5 被容量规则吃掉后，
   // 剩下的 "PCI Express Gen" 就再也匹配不上了
   /\bPCI\s*Express\s*(?:Gen\s*)?[\d.]+(?:\s*x\d+)?/gi,

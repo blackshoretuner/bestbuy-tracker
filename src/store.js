@@ -300,7 +300,8 @@ export const store = {
       enabled: s.enabled !== false,
       channel: s.channel || 'api',        // api | openbox
       kind: s.kind === 'hardware' ? 'hardware' : 'computer',   // 整机 or 单件硬件
-      retailer: s.retailer === 'bh' ? 'bh' : 'bestbuy',        // 去哪家查
+      // 去哪家查。白名单挡住乱值，免得写进一个没有 provider 的零售商
+      retailer: ['bh', 'amazon'].includes(s.retailer) ? s.retailer : 'bestbuy',
       part: s.part || null,                                     // B&H 用分类页，指明品类
       categoryId: s.categoryId || '',
       keywords: s.keywords || '',

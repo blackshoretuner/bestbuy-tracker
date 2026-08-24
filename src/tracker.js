@@ -9,9 +9,13 @@ import {
 import { scrapeProduct } from './providers/scrape.js';
 import { WebSession } from './providers/bestbuyWeb.js';
 import { BhSession } from './providers/bhWeb.js';
+import { AmazonSession } from './providers/amazonWeb.js';
 import { isComponent, isComputer } from './specs.js';
 import { notifyDrops } from './notify.js';
 import { createLimiter, inQuietHours, log, money, sleep } from './util.js';
+
+/** 不走 Best Buy 通道的零售商 —— 各有自己的 provider 和 session */
+const EXTERNAL_RETAILERS = new Set(['bh', 'amazon']);
 
 const BOARD_TTL_MS = 45 * 86400000;
 
@@ -439,17 +443,30 @@ export class Tracker extends EventEmitter {
   /* ---------------------------------------------------------------- */
   /* 自动搜索：把数码区符合条件的降价直接写进历史记录                      */
   /* ---------------------------------------------------------------- */
-  /** B&H 的 session 按需开、整轮共用；轮次结束由 #closeExtraSessions 收摊 */
-  async #bhSession(settings) {
-    if (!this._bh) this._bh = new BhSession(settings);
-    return this._bh;
+  /**
+   * 非 Best Buy 的零售商各有自己的 provider，session 按需开、整轮共用
+   *（开一次浏览器要好几秒，不值得每条搜索都开）。轮次结束统一收摊。
+   */
+  async #extSession(retailer, settings) {
+    const slot = retailer === 'amazon' ? '_amz' : '_bh';
+    if (!this[slot]) {
+      this[slot] = retailer === 'amazon' ? new AmazonSession(settings) : new BhSession(settings);
+    }
+    return this[slot];
   }
 
   async #closeExtraSessions() {
-    if (this._bh) {
-      await this._bh.close().catch(() => {});
-      this._bh = null;
+    for (const slot of ['_bh', '_amz']) {
+      if (this[slot]) {
+        await this[slot].close().catch(() => {});
+        this[slot] = null;
+      }
     }
+  }
+
+  /** 本轮有没有开着任何外部零售商的浏览器 */
+  #hasExtSession() {
+    return !!(this._bh || this._amz);
   }
 
   async #runSearches(settings, notifiable, session) {
@@ -458,8 +475,8 @@ export class Tracker extends EventEmitter {
     if (!searches.length) return out;
 
     // B&H 的搜索不依赖 Best Buy 的通道，别被下面那个"没有可用通道"挡住
-    const onlyBh = searches.every((s) => s.retailer === 'bh');
-    if (onlyBh) return this.#runSearchList(searches, settings, notifiable, session, out);
+    const onlyExternal = searches.every((s) => EXTERNAL_RETAILERS.has(s.retailer));
+    if (onlyExternal) return this.#runSearchList(searches, settings, notifiable, session, out);
 
     if (!session && !usesApi(settings)) {
       out.errors.push('没有可用的数据通道：去「设置」把通道选成「浏览器」，或者填入 API Key');
@@ -501,19 +518,19 @@ export class Tracker extends EventEmitter {
     // 没传 session 但需要浏览器（比如从界面上点"立即运行"），临时开一个
     // B&H 的搜索用不着 Best Buy 的 session，别白开一个浏览器
     let ownSession = null;
-    if (!session && usesWeb(settings) && search.retailer !== 'bh') {
+    if (!session && usesWeb(settings) && !EXTERNAL_RETAILERS.has(search.retailer)) {
       ownSession = new WebSession(settings);
       session = ownSession;
     }
 
     // 单独运行一条 B&H 搜索（界面上点「立即运行」）时，用完就地关掉
-    const ownBh = search.retailer === 'bh' && !this._bh;
+    const ownExt = EXTERNAL_RETAILERS.has(search.retailer) && !this.#hasExtSession();
 
     try {
       ({ products, meta } = await this.#fetchForSearch(search, settings, limit, session));
     } finally {
       if (ownSession) await ownSession.close().catch(() => {});
-      if (ownBh) await this.#closeExtraSessions();
+      if (ownExt) await this.#closeExtraSessions();
     }
 
     return this.#recordSearchResults(search, settings, products, meta, { record, notifiable });
@@ -526,15 +543,15 @@ export class Tracker extends EventEmitter {
     // B&H 走自己的 provider：URL、卡片结构、价格写法和 Best Buy 完全不同
     //（B&H 把现价的整数和小数拆成两个元素，详见 bhWeb.js 的注释）。
     // 每个零售商一个 session，整轮共用，不为每条搜索反复开浏览器。
-    if (search.retailer === 'bh') {
-      const bh = await this.#bhSession(settings);
-      products = await bh.search({
+    if (EXTERNAL_RETAILERS.has(search.retailer)) {
+      const sess = await this.#extSession(search.retailer, settings);
+      products = await sess.search({
         part: search.part || 'gpu',
         keywords: search.keywords || '',
         limit,
         maxPages: settings.maxPagesPerSearch || 3,
       });
-      meta = { channel: 'bh-web', retailer: 'bh', fetched: products.length };
+      meta = { channel: `${search.retailer}-web`, retailer: search.retailer, fetched: products.length };
       const min = search.minPrice;
       const max = search.maxPrice;
       if (min != null) products = products.filter((p) => p.price >= min);

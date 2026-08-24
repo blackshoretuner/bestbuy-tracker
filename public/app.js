@@ -137,7 +137,7 @@ function pctCell(pct, title) {
 }
 
 /* 零售商的显示名。内部一律用小写 id（bestbuy/bh），显示分开管，改文案不动数据。 */
-const SHOP_LABEL = { bestbuy: 'Best Buy', bh: 'B&H' };
+const SHOP_LABEL = { bestbuy: 'Best Buy', bh: 'B&H', amazon: 'Amazon' };
 const shopLabel = (id) => SHOP_LABEL[id] || id || '?';
 
 function crossTitle(cross) {

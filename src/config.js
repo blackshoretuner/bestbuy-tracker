@@ -250,5 +250,12 @@ export function seedSearches() {
     mk({ id: 'seed-bh-cpu', name: 'B&H · CPU', kind: 'hardware', retailer: 'bh', part: 'cpu', limit: 40 }),
     mk({ id: 'seed-bh-ram', name: 'B&H · 内存', kind: 'hardware', retailer: 'bh', part: 'ram', limit: 40 }),
     mk({ id: 'seed-bh-ssd', name: 'B&H · 固态', kind: 'hardware', retailer: 'bh', part: 'ssd', limit: 40 }),
+    // ---- Amazon：商品最全，但同款重复/第三方 listing 也最多 ----
+    // 不给 categoryId：Amazon 没有 B&H 那种干净的分类页，关键词搜索才是正路
+    //（part → 关键词的映射在 amazonWeb.js 的 PART_TERMS）
+    mk({ id: 'seed-amz-gpu', name: 'Amazon · 显卡', kind: 'hardware', retailer: 'amazon', part: 'gpu', limit: 40 }),
+    mk({ id: 'seed-amz-cpu', name: 'Amazon · CPU', kind: 'hardware', retailer: 'amazon', part: 'cpu', limit: 40 }),
+    mk({ id: 'seed-amz-ram', name: 'Amazon · 内存', kind: 'hardware', retailer: 'amazon', part: 'ram', limit: 40 }),
+    mk({ id: 'seed-amz-ssd', name: 'Amazon · 固态', kind: 'hardware', retailer: 'amazon', part: 'ssd', limit: 40 }),
   ];
 }
