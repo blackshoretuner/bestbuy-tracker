@@ -1171,12 +1171,16 @@ function connectStream() {
 /* ---------------- 计数 ---------------- */
 async function loadCounts() {
   try {
-    const [b, e, w] = await Promise.all([
+    // 硬件榜的计数也要在这里拿。以前只在 loadHardware() 里设，
+    // 结果不点进硬件页就一直显示「硬件 0」（实测榜上 267 件）。
+    const [b, h, e, w] = await Promise.all([
       api('/api/board?limit=1'),
+      api('/api/board?limit=1&kind=hardware'),
       api('/api/events?limit=1&type=all'),
       api('/api/watch'),
     ]);
     $('#cntBoard').textContent = b.total;
+    $('#cntHw').textContent = h.total;
     $('#cntEvents').textContent = e.total;
     $('#cntWatch').textContent = w.items.length;
   } catch { /* ignore */ }

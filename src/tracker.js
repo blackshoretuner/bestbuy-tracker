@@ -155,12 +155,14 @@ export class Tracker extends EventEmitter {
     const notifiable = [];
     // 整轮共用一个浏览器实例：开一次浏览器要好几秒，不值得每条搜索都开
     const session = usesWeb(settings) ? new WebSession(settings) : null;
+    // 本轮自己的外部零售商 session 袋子，只有本轮会碰它
+    const bag = Tracker.#newBag();
 
     try {
       const watchResult = await this.#refreshWatchlist(settings, notifiable, session);
       Object.assign(summary, watchResult);
 
-      const searchResult = await this.#runSearches(settings, notifiable, session);
+      const searchResult = await this.#runSearches(settings, notifiable, session, bag);
       summary.discovered = searchResult.discovered;
       summary.searchesRun = searchResult.searchesRun;
       summary.errors.push(...searchResult.errors);
@@ -176,7 +178,7 @@ export class Tracker extends EventEmitter {
       });
     } finally {
       if (session) await session.close().catch(() => {});
-      await this.#closeExtraSessions();
+      await this.#closeBag(bag);
     }
 
     // 通知
@@ -473,28 +475,28 @@ export class Tracker extends EventEmitter {
     bag.clear();
   }
 
-  async #runSearches(settings, notifiable, session) {
+  async #runSearches(settings, notifiable, session, bag) {
     const out = { discovered: 0, searchesRun: 0, drops: 0, errors: [] };
     const searches = store.listSearches().filter((s) => s.enabled !== false);
     if (!searches.length) return out;
 
     // B&H 的搜索不依赖 Best Buy 的通道，别被下面那个"没有可用通道"挡住
     const onlyExternal = searches.every((s) => EXTERNAL_RETAILERS.has(s.retailer));
-    if (onlyExternal) return this.#runSearchList(searches, settings, notifiable, session, out);
+    if (onlyExternal) return this.#runSearchList(searches, settings, notifiable, session, out, bag);
 
     if (!session && !usesApi(settings)) {
       out.errors.push('没有可用的数据通道：去「设置」把通道选成「浏览器」，或者填入 API Key');
       return out;
     }
 
-    return this.#runSearchList(searches, settings, notifiable, session, out);
+    return this.#runSearchList(searches, settings, notifiable, session, out, bag);
   }
 
   /** 跑一批搜索。抽出来是为了让"全是 B&H"的情况能跳过 Best Buy 的通道检查。 */
-  async #runSearchList(searches, settings, notifiable, session, out) {
+  async #runSearchList(searches, settings, notifiable, session, out, bag) {
     for (const search of searches) {
       try {
-        const res = await this.runSearchOnce(search, settings, { record: true, notifiable, session });
+        const res = await this.runSearchOnce(search, settings, { record: true, notifiable, session, bag });
         out.searchesRun++;
         out.discovered += res.newCount;
         out.drops += res.dropCount;
@@ -513,7 +515,7 @@ export class Tracker extends EventEmitter {
   async runSearchOnce(
     search,
     settings = store.getSettings(),
-    { record = true, notifiable = [], session = null } = {}
+    { record = true, notifiable = [], session = null, bag = null } = {}
   ) {
     const limit = Math.min(search.limit || 40, settings.maxDiscoverPerSearch || 60);
     let products = [];
@@ -527,20 +529,21 @@ export class Tracker extends EventEmitter {
       session = ownSession;
     }
 
-    // 单独运行一条 B&H 搜索（界面上点「立即运行」）时，用完就地关掉
-    const ownExt = EXTERNAL_RETAILERS.has(search.retailer) && !this.#hasExtSession();
+    // 调用方没给袋子（界面上点「立即运行」）就自己开一个，用完自己关。
+    // 绝不碰别人的袋子 —— 定时轮次可能正在用。
+    const ownBag = bag ? null : Tracker.#newBag();
 
     try {
-      ({ products, meta } = await this.#fetchForSearch(search, settings, limit, session));
+      ({ products, meta } = await this.#fetchForSearch(search, settings, limit, session, bag || ownBag));
     } finally {
       if (ownSession) await ownSession.close().catch(() => {});
-      if (ownExt) await this.#closeExtraSessions();
+      await this.#closeBag(ownBag);
     }
 
     return this.#recordSearchResults(search, settings, products, meta, { record, notifiable });
   }
 
-  async #fetchForSearch(search, settings, limit, session) {
+  async #fetchForSearch(search, settings, limit, session, bag) {
     let products = [];
     let meta = {};
 
@@ -548,7 +551,7 @@ export class Tracker extends EventEmitter {
     //（B&H 把现价的整数和小数拆成两个元素，详见 bhWeb.js 的注释）。
     // 每个零售商一个 session，整轮共用，不为每条搜索反复开浏览器。
     if (EXTERNAL_RETAILERS.has(search.retailer)) {
-      const sess = await this.#extSession(search.retailer, settings);
+      const sess = await this.#bagSession(bag, search.retailer, settings);
       products = await sess.search({
         part: search.part || 'gpu',
         keywords: search.keywords || '',
