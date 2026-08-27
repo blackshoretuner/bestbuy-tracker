@@ -250,6 +250,11 @@ export function seedSearches() {
     mk({ id: 'seed-bh-cpu', name: 'B&H · CPU', kind: 'hardware', retailer: 'bh', part: 'cpu', limit: 40 }),
     mk({ id: 'seed-bh-ram', name: 'B&H · 内存', kind: 'hardware', retailer: 'bh', part: 'ram', limit: 40 }),
     mk({ id: 'seed-bh-ssd', name: 'B&H · 固态', kind: 'hardware', retailer: 'bh', part: 'ssd', limit: 40 }),
+    // ---- 整机也要多平台：同一台笔电在三家的价格才比得出值不值 ----
+    mk({ id: 'seed-bh-laptop', name: 'B&H · 笔电', kind: 'computer', retailer: 'bh', part: 'laptop', limit: 40 }),
+    mk({ id: 'seed-bh-desktop', name: 'B&H · 台式', kind: 'computer', retailer: 'bh', part: 'desktop', limit: 30 }),
+    mk({ id: 'seed-amz-laptop', name: 'Amazon · 笔电', kind: 'computer', retailer: 'amazon', part: 'laptop', limit: 40 }),
+    mk({ id: 'seed-amz-desktop', name: 'Amazon · 台式', kind: 'computer', retailer: 'amazon', part: 'desktop', limit: 30 }),
     // ---- Amazon：商品最全，但同款重复/第三方 listing 也最多 ----
     // 不给 categoryId：Amazon 没有 B&H 那种干净的分类页，关键词搜索才是正路
     //（part → 关键词的映射在 amazonWeb.js 的 PART_TERMS）

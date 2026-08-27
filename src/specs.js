@@ -482,12 +482,6 @@ const COMPONENT_PATTERNS = [
         '\\b(?:tray|boxed)\\s+processor\\b',  // 散片/盒装，整机 0 误伤
         '\\d+[-\\s]?core\\s*[-–,]?\\s*\\d+[-\\s]?thread',   // 12-core - 24-thread / 12-core, 24-thread
         '\\b\\d{1,2}c\\s*\\/?\\s*\\d{1,2}t\\b',             // EPYC 那种 "12C 24T" 简写
-        '\\b(?:hexa|octa|deca|dodeca|hexadeca|quad)[-\\s]?core\\b',
-        // 英文词形核心数（"Eight-Core"），整机 0 误伤
-        '\\b(?:eight|nine|ten|twelve|sixteen|twenty|twentyfour)[-\\s]?core\\b',
-        // 核心数 + processor 同时出现。**不能只用裸 N-core** ——
-        // 实测误伤 14 台整机（"Snapdragon X (8-Core CPU)" 这类）。
-        '\\b\\d{1,3}\\s?-?core\\b[\\s\\S]*\\bprocessor\\b',
       ].join('|')
     ),
   ],
@@ -507,11 +501,46 @@ const COMPONENT_PATTERNS = [
   ],
 ];
 
+/**
+ * 「弱锚点」：核心数这类**描述性**写法。整机的标题里也会出现，所以只有在
+ * 名字里找不到整机名词时才认。
+ *
+ * 为什么要分强弱：`Quad-Core` / `8-Core … Processor` 这些原来和 socket、DIMM
+ * 混在一起当同级锚点。用 Best Buy 的 242 台整机验证时没出问题 —— 因为
+ * Best Buy 的笔电标题不这么写。接了 Amazon 才暴露：Amazon 的笔电标题**就是**
+ * 这么写的，实测 20 件里有 2 件笔电被判成 CPU
+ *（"15.6'' AI Laptop … Quad-Core …" → cpu）。
+ * 强锚点是明确的配件产品名词（Socket AM5 / 288-pin / Graphics Card / Internal SSD），
+ * 整机不会出现；弱锚点必须让位给整机名词。
+ */
+const WHOLE_MACHINE_NOUN =
+  /\blaptop\b|\bnotebook\b|\bmacbook\b|\bchromebook\b|\bultrabook\b|all[-\s]?in[-\s]?one|\bdesktop (?:pc|computer|tower)\b|gaming (?:pc|desktop)\b|\bmini pc\b|\btablet\b/;
+
+const COMPONENT_WEAK = [
+  [
+    'cpu',
+    new RegExp(
+      [
+        '\\b(?:hexa|octa|deca|dodeca|hexadeca|quad)[-\\s]?core\\b',
+        '\\b(?:eight|nine|ten|twelve|sixteen|twenty|twentyfour)[-\\s]?core\\b',
+        // 核心数 + processor 同时出现。**不能只用裸 N-core** ——
+        // 实测误伤 14 台整机（"Snapdragon X (8-Core CPU)" 这类）。
+        '\\b\\d{1,3}\\s?-?core\\b[\\s\\S]*\\bprocessor\\b',
+      ].join('|')
+    ),
+  ],
+];
+
 export function classifyForm(product, map) {
   const t = `${product.name} ${product.category || ''} ${pick(map, 'product type') || ''}`.toLowerCase();
 
-  // 配件优先，理由见 COMPONENT_PATTERNS 上面的注释
+  // 强锚点优先，理由见 COMPONENT_PATTERNS 上面的注释
   for (const [form, re] of COMPONENT_PATTERNS) if (re.test(t)) return form;
+
+  // 弱锚点只在"名字里没有整机名词"时才认，见 COMPONENT_WEAK 的注释
+  if (!WHOLE_MACHINE_NOUN.test(t)) {
+    for (const [form, re] of COMPONENT_WEAK) if (re.test(t)) return form;
+  }
 
   if (/all[-\s]?in[-\s]?one|\baio\b/.test(t)) return 'aio';
   if (/desktop|tower|mini pc|\bnuc\b|workstation/.test(t)) return 'desktop';

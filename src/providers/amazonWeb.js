@@ -21,6 +21,8 @@ export const RETAILER = 'amazon';
 
 /* Amazon 没有 B&H 那种干净的分类页，关键词搜索才是正路 */
 const PART_TERMS = {
+  laptop: 'laptop computer',
+  desktop: 'desktop computer tower',
   gpu: 'graphics card',
   cpu: 'desktop cpu processor',
   ram: 'desktop memory ddr5',

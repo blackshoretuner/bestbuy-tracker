@@ -12,7 +12,7 @@ const state = {
   categories: [],
   searches: [],
   board: [],
-  boardFilters: { q: '', form: 'all', condition: 'all', maxPrice: '', onlyDrops: false, inStock: true, trueDeal: false, sort: 'deal' },
+  boardFilters: { q: '', form: 'all', condition: 'all', retailer: 'all', maxPrice: '', onlyDrops: false, inStock: true, trueDeal: false, sort: 'deal' },
   hwFilters: { q: '', form: 'all', retailer: 'all', maxPrice: '', inStock: true, sort: 'deal' },
   evFilters: { q: '', type: 'drop,target', since: '', sort: 'recent' },
   editingSearch: null,
@@ -204,7 +204,7 @@ function refreshTab() {
 async function loadBoard() {
   const f = state.boardFilters;
   const qs = new URLSearchParams({
-    q: f.q, form: f.form, condition: f.condition, sort: f.sort,
+    q: f.q, form: f.form, condition: f.condition, retailer: f.retailer, sort: f.sort,
     onlyDrops: f.onlyDrops ? '1' : '0',
     inStock: f.inStock ? '1' : '0',
     trueDeal: f.trueDeal ? '1' : '0',
@@ -226,6 +226,7 @@ async function loadBoard() {
 
     // 重量列：整榜一台都没有就收起来。网页通道永远取不到（重量只在详情页），
     // 留一整列 "·" 纯粹白占表格宽度；哪天换成 API 通道有数据了它会自己回来。
+    applyShopColumn(st.retailers, $('#boardTable'), '#fBoardShop', state.boardFilters);
     if (applyWeightColumn((st.withWeight ?? 0) > 0)) return loadBoard();
 
     // 历史分位要靠时间攒。一列全是"—"很容易被当成坏了，直接讲明白。
@@ -280,7 +281,7 @@ function emptyBoardMessage() {
     );
   }
 
-  const filtered = f.q || f.onlyDrops || f.maxPrice || f.form !== 'all' || f.condition !== 'all';
+  const filtered = f.q || f.onlyDrops || f.maxPrice || f.form !== 'all' || f.condition !== 'all' || f.retailer !== 'all';
   if (filtered) {
     return `<b>当前筛选没有命中</b>榜上共 ${$('#cntBoard').textContent} 台，放宽条件再试试`;
   }
@@ -328,6 +329,7 @@ function renderBoard(rows) {
 
     return `<tr class="${[dropped ? 'hit' : '', r.deal?.trueDeal ? 'trueDeal' : ''].filter(Boolean).join(' ')}" title="${esc(title)}">
       <td class="mono">${esc(r.sku)}</td>
+      <td class="w-shop shop">${esc(shopLabel(r.retailer))}</td>
       <td class="name"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(s.shortName || r.name)}</a>${condBadge(r.condition)}${r.thirdParty ? '<span class="badge third" title="Best Buy Marketplace 第三方卖家，退换货政策和自营不同">三方</span>' : ''}${isLow ? '<span class="badge low">新低</span>' : ''}${r.inStock === false ? '<span class="badge oos">缺货</span>' : ''}</td>
       <td class="left">${dash(s.cpu)}</td>
       <td>${dash(s.gpu)}</td>
@@ -369,6 +371,7 @@ $('#fBoardStock').addEventListener('change', (e) => { state.boardFilters.inStock
 $('#fBoardTrue').addEventListener('change', (e) => { state.boardFilters.trueDeal = e.target.checked; loadBoard(); });
 bindSeg('#fBoardForm', (v) => { state.boardFilters.form = v; loadBoard(); });
 bindSeg('#fBoardCond', (v) => { state.boardFilters.condition = v; loadBoard(); });
+bindSeg('#fBoardShop', (v) => { state.boardFilters.retailer = v; loadBoard(); });
 
 function bindSeg(sel, cb) {
   const box = $(sel);
@@ -422,7 +425,7 @@ async function loadHardware() {
     }
     // 首次进页面也要对齐表头（默认「全部」用中性说法）
     applyHwHeadings(f.form);
-    applyShopColumn(st.retailers, $('#hwTable'), '#fHwShop');
+    applyShopColumn(st.retailers, $('#hwTable'), '#fHwShop', state.hwFilters);
     renderHardware(data.rows);
   } catch (e) {
     toast(e.message, 'err');
@@ -473,7 +476,7 @@ const HW_HEADINGS = {
  * 计数来自 stats.retailers，那是**筛选之前**统计的，所以按了筛选按钮
  * 其他家的计数不会归零、按钮不会自己消失。
  */
-function applyShopColumn(counts, table, segSel) {
+function applyShopColumn(counts, table, segSel, filters = state.hwFilters) {
   const shops = Object.keys(counts || {});
   const multi = shops.length > 1;
   table.classList.toggle('noShop', !multi);
@@ -487,7 +490,7 @@ function applyShopColumn(counts, table, segSel) {
   const have = [...seg.querySelectorAll('button')].map((b) => b.dataset.v);
   // 只有集合变了才重建，否则会把用户当前选中的按钮状态冲掉
   if (want.join() !== have.join()) {
-    const cur = state.hwFilters.retailer;
+    const cur = filters.retailer;
     seg.innerHTML = want
       .map((v) => {
         const label = v === 'all' ? '全部' : `${shopLabel(v)} ${counts[v]}`;

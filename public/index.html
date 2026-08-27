@@ -56,6 +56,8 @@
       <button data-v="new">全新</button>
       <button data-v="used">官翻/拆封</button>
     </div>
+    <!-- 零售商按钮由 app.js 按 stats.retailers 动态生成；只有一家时整块隐藏 -->
+    <div class="seg" id="fBoardShop" hidden></div>
     <input class="in w90" id="fBoardMax" type="number" placeholder="价格上限">
     <label class="chk"><input type="checkbox" id="fBoardDrops"> 只看降价</label>
     <label class="chk"><input type="checkbox" id="fBoardStock" checked> 有货</label>
@@ -84,6 +86,7 @@
       <thead>
         <tr>
           <th class="w-sku">sku</th>
+          <th class="w-shop">商家</th>
           <th class="w-name">name</th>
           <th class="w-cpu">cpu</th>
           <th class="w-gpu">gpu</th>

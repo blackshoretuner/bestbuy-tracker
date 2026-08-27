@@ -18,6 +18,10 @@ export const RETAILER = 'bh';
 
 /* 我们的品类 → B&H 分类页。分类页比搜索页出货稳，也不用猜关键词。 */
 const CATEGORY_PATHS = {
+  // 整机。实测 ci/6550 是唯一稳定出货的笔电分类页；关键词搜索（/c/search）
+  // 走我们的提取器返回 0 件，别用。
+  laptop: '/c/buy/Laptops/ci/6550',
+  desktop: '/c/buy/Desktop-Computers/ci/6549',
   gpu: '/c/buy/Graphic-Cards/ci/6567',
   cpu: '/c/buy/CPUs-Processors/ci/6568',
   ram: '/c/buy/Memory-RAM/ci/6569',
@@ -137,7 +141,7 @@ const PAGE_HEALTH = String.raw`(() => {
     .some(f => { const r = f.getBoundingClientRect(); return r.width > 120 && r.height > 80; });
   return {
     title: document.title,
-    blockedText: /access denied|are you a robot|unusual traffic|verify you are human|just a moment/i.test(t),
+    blockedText: /access denied|are you a robot|unusual traffic|verify you are human|just a moment|请稍候|安全验证/i.test(t),
     visibleCaptcha: bigCaptcha,
     hasProducts: !!document.querySelector('a[href*="/c/product/"]'),
     noResults: /no results|did not match|0 items found/i.test(t),
