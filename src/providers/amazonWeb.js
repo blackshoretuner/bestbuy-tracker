@@ -184,6 +184,12 @@ export class AmazonSession {
       try {
         const health = await this.#load(url);
         if (health?.noResults) break;
+        // 页面既没有商品也没有"无结果"文案 —— 多半是没渲染完或换了布局。
+        // 不吭声地返回 0 是最难查的故障（B&H 那边踩过），这里如实记一笔。
+        if (!health?.hasProducts) {
+          log.warn(`Amazon 第 ${page} 页没有data-asin 卡片，也没有"无结果"文案（标题：${health?.title || '?'}）——` +
+            '当作空结果处理，但这通常意味着页面没渲染完或改版了');
+        }
         onPage = await this.page.scrollToLoadAll({ maxRounds: 12, stepPause: 800, countExpr: COUNT_ITEMS });
         rows = (await this.page.evaluate(EXTRACT_LIST)) || [];
       } catch (e) {

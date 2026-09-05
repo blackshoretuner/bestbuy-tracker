@@ -209,6 +209,12 @@ export class BhSession {
       try {
         const health = await this.#load(url);
         if (health?.noResults) break;
+        // 页面既没有商品也没有"无结果"文案 —— 多半是没渲染完或换了布局。
+        // 不吭声地返回 0 是最难查的故障（B&H 那边踩过），这里如实记一笔。
+        if (!health?.hasProducts) {
+          log.warn(`B&H 第 ${page} 页没有/c/product/ 链接，也没有"无结果"文案（标题：${health?.title || '?'}）——` +
+            '当作空结果处理，但这通常意味着页面没渲染完或改版了');
+        }
         // B&H 的价格是延迟渲染的：实测滚动前只有 3 个价格串，滚过 8 屏后 42 个
         onPage = await this.page.scrollToLoadAll({ maxRounds: 14, stepPause: 900, countExpr: COUNT_ITEMS });
         rows = (await this.page.evaluate(EXTRACT_LIST)) || [];
