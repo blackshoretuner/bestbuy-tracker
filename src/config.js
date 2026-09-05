@@ -250,6 +250,28 @@ export function seedSearches() {
     mk({ id: 'seed-bh-cpu', name: 'B&H · CPU', kind: 'hardware', retailer: 'bh', part: 'cpu', limit: 40 }),
     mk({ id: 'seed-bh-ram', name: 'B&H · 内存', kind: 'hardware', retailer: 'bh', part: 'ram', limit: 40 }),
     mk({ id: 'seed-bh-ssd', name: 'B&H · 固态', kind: 'hardware', retailer: 'bh', part: 'ssd', limit: 40 }),
+    // ---- 盯具体型号：泛词搜索（"laptop"）翻不到具体机型，想跟哪台就单开一条 ----
+    // 实测效果：只靠泛词时榜上只有 3 台幻14 且全是 Best Buy；
+    // 加了这两条之后 17 台、跨两家，同配置价差一眼可见
+    //（Ryzen 9 + 5060 + 16G：amazon $1849.71 vs bestbuy $2299.99）。
+    // **不给 B&H 开**：B&H 的关键词搜索 /c/search?q= 走我们的提取器返回 0 件
+    //（不是被拦，是页面结构不同），B&H 只能走分类页。
+    mk({
+      id: 'seed-g14-bestbuy',
+      name: '幻14 · Best Buy',
+      categoryId: 'abcat0502000',
+      keywords: 'zephyrus g14',
+      sort: 'salePrice.asc',
+      limit: 30,
+    }),
+    mk({
+      id: 'seed-g14-amazon',
+      name: '幻14 · Amazon',
+      retailer: 'amazon',
+      keywords: 'zephyrus g14',
+      sort: 'salePrice.asc',
+      limit: 30,
+    }),
     // ---- 整机也要多平台：同一台笔电在三家的价格才比得出值不值 ----
     mk({ id: 'seed-bh-laptop', name: 'B&H · 笔电', kind: 'computer', retailer: 'bh', part: 'laptop', limit: 40 }),
     mk({ id: 'seed-bh-desktop', name: 'B&H · 台式', kind: 'computer', retailer: 'bh', part: 'desktop', limit: 30 }),
