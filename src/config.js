@@ -69,6 +69,12 @@ export const DEFAULT_SETTINGS = {
   dropMinAmount: 0,              // 降幅小于该金额(美元)不记事件/不通知
   recordEveryObservation: true,  // 每次采样都写入价格曲线(用于图表)
 
+  // ---- 特别关注 ----
+  // 盯住某个品牌/型号，大降价第一时间通知。命中时**绕开**下面的
+  // dropMinPercent/dropMinAmount 全局阈值，也不受 notify.maxPerCycle 压制。
+  // 规则结构见 src/alerts.js 的 ALERT_DEFAULTS。
+  alerts: [],
+
   // ---- 通知 ----
   notify: {
     toast: true,                 // Windows 桌面通知

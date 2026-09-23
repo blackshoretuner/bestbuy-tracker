@@ -103,16 +103,24 @@ export function notify({ title, body, launchUrl, sound = false }) {
 export async function notifyDrops(drops, settings) {
   if (!settings?.notify?.toast || !drops.length) return;
   const max = settings.notify.maxPerCycle || 5;
-  const list = drops.slice(0, max);
+
+  // 特别关注的单独拎出来，**不受每轮上限压制**，而且排在前面先弹。
+  // 上限是为了防普通降价刷屏；特别关注本来就是"我专门盯着这个"，
+  // 被一堆无关降价挤掉就失去意义了。
+  const urgent = drops.filter((d) => d.alertHit);
+  const normal = drops.filter((d) => !d.alertHit).slice(0, max);
+  const list = [...urgent, ...normal];
 
   for (const d of list) {
     const pct = d.pct ? ` (-${d.pct}%)` : '';
     const from = d.prevPrice !== null && d.prevPrice !== undefined ? `$${d.prevPrice} → ` : '';
+    const hit = d.alertHit;
     await notify({
-      title: d.type === 'target' ? '已到目标价！' : '降价了',
-      body: `${d.name}\n${from}$${d.price}${pct}`,
+      title: hit ? `⚡ 特别关注：${hit.keyword}` : d.type === 'target' ? '已到目标价！' : '降价了',
+      body: `${d.name}\n${from}$${d.price}${pct}${hit?.note ? '\n' + hit.note : ''}`,
       launchUrl: d.url,
-      sound: !!settings.notify.sound,
+      // 特别关注强制带声音：专门设了规则，别让它悄悄划过去
+      sound: hit ? true : !!settings.notify.sound,
     });
   }
 

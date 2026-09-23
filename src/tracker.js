@@ -11,6 +11,7 @@ import { WebSession } from './providers/bestbuyWeb.js';
 import { BhSession } from './providers/bhWeb.js';
 import { AmazonSession } from './providers/amazonWeb.js';
 import { isComponent, isComputer } from './specs.js';
+import { matchAlert } from './alerts.js';
 import { notifyDrops } from './notify.js';
 import { createLimiter, inQuietHours, log, money, sleep } from './util.js';
 
@@ -187,10 +188,16 @@ export class Tracker extends EventEmitter {
       const filtered = settings.notify.onlyWatchlist
         ? notifiable.filter((d) => d.origin === 'watch')
         : notifiable;
-      if (quiet && filtered.length) {
-        log.info(`免打扰时段，${filtered.length} 条降价只写入历史记录，不弹通知`);
-      } else if (filtered.length) {
-        await notifyDrops(filtered, settings);
+      // 免打扰时段里，勾了"免打扰也弹"的特别关注仍然要通知 ——
+      // 真在等的那台机器，半夜降价也得让你知道。其余的只写历史记录。
+      const urgent = quiet
+        ? filtered.filter((d) => d.alertHit?.ignoreQuietHours)
+        : filtered;
+      const muted = quiet ? filtered.length - urgent.length : 0;
+      if (muted) log.info(`免打扰时段，${muted} 条降价只写入历史记录，不弹通知`);
+      if (urgent.length) {
+        if (quiet) log.info(`免打扰时段，但有 ${urgent.length} 条命中了「免打扰也提醒」的特别关注`);
+        await notifyDrops(urgent, settings);
       }
     } catch (e) {
       log.warn('通知发送异常', e.message);
@@ -679,8 +686,11 @@ export class Tracker extends EventEmitter {
         } else if (dropped) {
           const delta = money(prevPrice - price);
           const pct = Math.round(((prevPrice - price) / prevPrice) * 1000) / 10;
+          // 特别关注命中时**绕开全局阈值** —— 全局是"降这么多才值得打扰我"，
+          // 特别关注是"这台我盯着，标准另算"，被全局先吞掉就失去意义了。
+          const hit = matchAlert({ ...p, price, retailer: p.retailer }, { pct, delta }, settings.alerts);
           const passes =
-            pct >= (settings.dropMinPercent || 0) && delta >= (settings.dropMinAmount || 0);
+            !!hit || (pct >= (settings.dropMinPercent || 0) && delta >= (settings.dropMinAmount || 0));
           if (passes) {
             dropCount++;
             // upsertBoard 已经把 minPrice 更新成新价了，得跟"上一个低点"比
@@ -692,9 +702,12 @@ export class Tracker extends EventEmitter {
               delta,
               pct,
               isAllTimeLow: isLow,
-              note: isLow ? `跟踪以来最低 · 来自「${search.name}」` : `来自「${search.name}」`,
+              alert: hit ? { keyword: hit.keyword, note: hit.note || '' } : null,
+              note: hit
+                ? `⚡ 特别关注「${hit.keyword}」${isLow ? ' · 跟踪以来最低' : ''}`
+                : isLow ? `跟踪以来最低 · 来自「${search.name}」` : `来自「${search.name}」`,
             });
-            notifiable.push({ ...ev, origin: 'search' });
+            notifiable.push({ ...ev, origin: 'search', alertHit: hit || null });
           }
         }
       }

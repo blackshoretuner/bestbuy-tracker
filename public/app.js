@@ -12,8 +12,8 @@ const state = {
   categories: [],
   searches: [],
   board: [],
-  boardFilters: { q: '', form: 'all', condition: 'all', retailer: 'all', maxPrice: '', onlyDrops: false, inStock: true, trueDeal: false, sort: 'deal' },
-  hwFilters: { q: '', form: 'all', retailer: 'all', maxPrice: '', inStock: true, sort: 'deal' },
+  boardFilters: { q: '', form: 'all', condition: 'all', retailer: 'all', maxPrice: '', onlyDrops: false, inStock: false, trueDeal: false, sort: 'deal' },
+  hwFilters: { q: '', form: 'all', retailer: 'all', maxPrice: '', inStock: false, sort: 'deal' },
   evFilters: { q: '', type: 'drop,target', since: '', sort: 'recent' },
   editingSearch: null,
 };
@@ -197,7 +197,7 @@ function refreshTab() {
   else if (state.tab === 'history') loadEvents();
   else if (state.tab === 'watch') loadWatch();
   else if (state.tab === 'searches') renderSearches();
-  else if (state.tab === 'settings') { fillSettings(); loadLogs(); }
+  else if (state.tab === 'settings') { fillSettings(); loadLogs(); loadAlerts(); }
 }
 
 /* ---------------- 电脑榜 ---------------- */
@@ -222,7 +222,8 @@ async function loadBoard() {
     $('#boardCount').textContent =
       `${data.rows.length} / ${data.total} 台` +
       (data.total ? ` · 同档可比 ${st.withCross ?? 0} · 有历史 ${st.withHist ?? 0} · 真好价 ${st.trueDeals ?? 0}` : '') +
-      (st.hiddenThirdParty ? ` · 已隐藏三方 ${st.hiddenThirdParty}` : '');
+      (st.hiddenThirdParty ? ` · 已隐藏三方 ${st.hiddenThirdParty}` : '') +
+      (st.soldOut ? ` · 已售罄 ${st.soldOut}` : '');
 
     // 重量列：整榜一台都没有就收起来。网页通道永远取不到（重量只在详情页），
     // 留一整列 "·" 纯粹白占表格宽度；哪天换成 API 通道有数据了它会自己回来。
@@ -327,7 +328,7 @@ function renderBoard(rows) {
       histTitle(r.hist),
     ].filter(Boolean).join('  ·  ');
 
-    return `<tr class="${[dropped ? 'hit' : '', r.deal?.trueDeal ? 'trueDeal' : ''].filter(Boolean).join(' ')}" title="${esc(title)}">
+    return `<tr class="${[dropped ? 'hit' : '', r.deal?.trueDeal ? 'trueDeal' : '', r.inStock === false ? 'oos' : ''].filter(Boolean).join(' ')}" title="${esc(title)}">
       <td class="mono">${esc(r.sku)}</td>
       <td class="w-shop shop">${esc(shopLabel(r.retailer))}</td>
       <td class="name"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(s.shortName || r.name)}</a>${condBadge(r.condition)}${r.thirdParty ? '<span class="badge third" title="Best Buy Marketplace 第三方卖家，退换货政策和自营不同">三方</span>' : ''}${isLow ? '<span class="badge low">新低</span>' : ''}${r.inStock === false ? '<span class="badge oos">缺货</span>' : ''}</td>
@@ -412,7 +413,9 @@ async function loadHardware() {
     const st = data.stats || {};
     $('#hwCount').textContent =
       `${data.rows.length} / ${data.total} 件` +
-      (data.total ? ` · 同档可比 ${st.withCross ?? 0} · 有历史 ${st.withHist ?? 0} · 真好价 ${st.trueDeals ?? 0}` : '');
+      (data.total ? ` · 同档可比 ${st.withCross ?? 0} · 有历史 ${st.withHist ?? 0} · 真好价 ${st.trueDeals ?? 0}` : '') +
+      // 默认不再隐藏缺货，所以要说清有多少是买不到的
+      (st.soldOut ? ` · 已售罄 ${st.soldOut}` : '');
 
     const hint = $('#hwHint');
     if (data.total && !st.withHist) {
@@ -539,7 +542,7 @@ function renderHardware(rows) {
     const label = [s.brand, s.shortName].filter(Boolean).join(' ') || r.name;
     const [c1, c2] = hwSpecCells(s);
 
-    return `<tr class="${[dropped ? 'hit' : '', r.deal?.trueDeal ? 'trueDeal' : ''].filter(Boolean).join(' ')}" title="${esc(title)}">
+    return `<tr class="${[dropped ? 'hit' : '', r.deal?.trueDeal ? 'trueDeal' : '', r.inStock === false ? 'oos' : ''].filter(Boolean).join(' ')}" title="${esc(title)}">
       <td class="mono">${esc(r.sku)}</td>
       <td class="w-shop shop">${esc(shopLabel(r.retailer))}</td>
       <td class="name"><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(label)}</a>${condBadge(r.condition)}${r.thirdParty ? '<span class="badge third" title="Best Buy Marketplace 第三方卖家">三方</span>' : ''}${isLow ? '<span class="badge low">新低</span>' : ''}${r.inStock === false ? '<span class="badge oos">缺货</span>' : ''}</td>
@@ -1089,6 +1092,76 @@ function fmtLog(l) {
   const t = new Date(l.ts).toLocaleTimeString('zh-CN', { hour12: false });
   return `<span class="t">${t}</span> <span class="lv-${esc(l.level)}">${esc(l.msg)}</span>${l.extra ? ' ' + esc(l.extra) : ''}`;
 }
+
+
+/* ---------------- 特别关注 ---------------- */
+async function loadAlerts() {
+  try {
+    const { items } = await api('/api/alerts');
+    renderAlerts(items);
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+function renderAlerts(items) {
+  const box = $('#alertList');
+  if (!items.length) {
+    box.innerHTML = '<div class="catRow"><span>还没有规则。设一条，比如关键词 <code>zephyrus g14</code>、降幅 15%</span></div>';
+    return;
+  }
+  box.innerHTML = items.map((a) => {
+    const bits = [
+      a.retailer !== 'any' ? shopLabel(a.retailer) : null,
+      a.minPercent ? `≥${a.minPercent}%` : null,
+      a.minAmount ? `≥${a.minAmount}` : null,
+      a.maxPrice != null ? `≤${a.maxPrice}` : null,
+      a.ignoreQuietHours ? '免打扰也提醒' : null,
+    ].filter(Boolean);
+    return `<div class="catRow" style="justify-content:space-between;${a.enabled === false ? 'opacity:.45' : ''}">
+      <span style="flex:1">
+        <code>${esc(a.keyword)}</code>
+        <span style="color:var(--fg-mute)"> ${esc(bits.join(' · '))}</span>
+      </span>
+      <label class="chk" style="margin-right:8px"><input type="checkbox" data-al-on="${esc(a.id)}" ${a.enabled !== false ? 'checked' : ''}> 启用</label>
+      <button class="btn sm danger" data-al-rm="${esc(a.id)}">删除</button>
+    </div>`;
+  }).join('');
+}
+
+$('#btnAddAlert').addEventListener('click', async () => {
+  const keyword = $('#alKeyword').value.trim();
+  if (!keyword) { toast('先填关键词（品牌或型号）', 'err'); return; }
+  try {
+    const { items } = await api('/api/alerts', { method: 'POST', body: {
+      keyword,
+      retailer: $('#alRetailer').value,
+      minPercent: $('#alPct').value,
+      minAmount: $('#alAmt').value,
+      maxPrice: $('#alMax').value,
+      ignoreQuietHours: $('#alQuiet').checked,
+    }});
+    $('#alKeyword').value = '';
+    renderAlerts(items);
+    toast(`已添加特别关注：${keyword}`, 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+});
+
+$('#alKeyword').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btnAddAlert').click(); });
+
+$('#alertList').addEventListener('click', async (e) => {
+  const rm = e.target.closest('[data-al-rm]');
+  if (!rm) return;
+  if (!confirm('删除这条特别关注？')) return;
+  const { items } = await api(`/api/alerts/${rm.dataset.alRm}`, { method: 'DELETE' });
+  renderAlerts(items);
+  toast('已删除', 'ok');
+});
+
+$('#alertList').addEventListener('change', async (e) => {
+  const t = e.target.closest('[data-al-on]');
+  if (!t) return;
+  const { items } = await api(`/api/alerts/${t.dataset.alOn}`, { method: 'PATCH', body: { enabled: t.checked } });
+  renderAlerts(items);
+});
 
 /* ---------------- 状态栏 ---------------- */
 function renderStatus() {

@@ -18,7 +18,8 @@ import { findBrowser } from './src/browser/cdp.js';
 import { pingNotify } from './src/notify.js';
 import { isComponent, isComputer, FORM_LABEL } from './src/specs.js';
 import { buildTierIndex, crossSection, dealScore, historyPercentile } from './src/analytics.js';
-import { csvEscape, getLogs, log, num, onLog, parseSkuFromInput } from './src/util.js';
+import { csvEscape, getLogs, log, num, onLog, parseSkuFromInput, uid } from './src/util.js';
+import { normalizeAlert } from './src/alerts.js';
 import { clearPidFile, newToken, writePidFile } from './src/instance.js';
 
 // 每次启动生成一个随机 token。控制脚本从 pid 文件里读到它才能调关机接口，
@@ -291,6 +292,8 @@ route('GET', '/api/board', async (req, res, _p, query) => {
       withWeight: allRows.filter((r) => r.specs?.weight).length,
       hiddenThirdParty,
       retailers: retailerCounts,
+      // 已售罄条数。默认不再过滤掉缺货，所以要让计数行说清有多少是买不到的
+      soldOut: allRows.filter((r) => r.inStock === false).length,
     },
     rows: rows.slice(0, limit).map((r) => ({ ...r, watched: watched.has(r.key) })),
   });
@@ -559,6 +562,39 @@ route('PUT', '/api/settings', async (req, res) => {
   store.updateSettings(body);
   tracker.restart();
   json(res, { ok: true, settings: publicSettings(), status: tracker.status() });
+});
+
+/* ---------------- 特别关注 ---------------- */
+route('GET', '/api/alerts', async (req, res) => {
+  json(res, { ok: true, items: store.getSettings().alerts || [] });
+});
+
+route('POST', '/api/alerts', async (req, res) => {
+  const body = await readBody(req);
+  if (!String(body.keyword || '').trim()) {
+    return fail(res, new Error('关键词不能为空 —— 那是用来匹配品牌或型号的'), 400);
+  }
+  const items = [...(store.getSettings().alerts || [])];
+  const item = normalizeAlert(body, uid('a_'));
+  items.push(item);
+  store.updateSettings({ alerts: items });
+  json(res, { ok: true, item, items });
+});
+
+route('PATCH', '/api/alerts/:id', async (req, res, params) => {
+  const body = await readBody(req);
+  const items = [...(store.getSettings().alerts || [])];
+  const i = items.findIndex((a) => a.id === params.id);
+  if (i < 0) return fail(res, new Error('没找到这条规则'), 404);
+  items[i] = normalizeAlert({ ...items[i], ...body }, params.id);
+  store.updateSettings({ alerts: items });
+  json(res, { ok: true, item: items[i], items });
+});
+
+route('DELETE', '/api/alerts/:id', async (req, res, params) => {
+  const items = (store.getSettings().alerts || []).filter((a) => a.id !== params.id);
+  store.updateSettings({ alerts: items });
+  json(res, { ok: true, items });
 });
 
 /* ---------------- 调度控制 ---------------- */

@@ -60,7 +60,7 @@
     <div class="seg" id="fBoardShop" hidden></div>
     <input class="in w90" id="fBoardMax" type="number" placeholder="价格上限">
     <label class="chk"><input type="checkbox" id="fBoardDrops"> 只看降价</label>
-    <label class="chk"><input type="checkbox" id="fBoardStock" checked> 有货</label>
+    <label class="chk"><input type="checkbox" id="fBoardStock"> 只看有货</label>
     <label class="chk"><input type="checkbox" id="fBoardTrue"> 只看真好价</label>
     <select class="in w130" id="fBoardSort">
       <option value="deal">值不值 ↓</option>
@@ -121,7 +121,7 @@
     <!-- 零售商按钮由 app.js 按 stats.retailers 动态生成；只有一家时整块隐藏 -->
     <div class="seg" id="fHwShop" hidden></div>
     <input class="in w90" id="fHwMax" type="number" placeholder="价格上限">
-    <label class="chk"><input type="checkbox" id="fHwStock" checked> 有货</label>
+    <label class="chk"><input type="checkbox" id="fHwStock"> 只看有货</label>
     <select class="in w130" id="fHwSort">
       <option value="deal">值不值 ↓</option>
       <option value="cross">同档最便宜</option>
@@ -320,6 +320,27 @@
       <label class="chk"><input type="checkbox" id="setToast"> Windows 桌面通知</label>
       <label class="chk"><input type="checkbox" id="setSound"> 通知带声音</label>
       <label class="chk"><input type="checkbox" id="setOnlyWatch"> 只对「关注列表」通知</label>
+    </div>
+
+    <div class="card">
+      <h3>特别关注</h3>
+      <em class="fieldHint">盯住某个品牌或型号，大降价第一时间弹通知。<b>命中时会绕开上面的全局降幅阈值</b>，
+        也不受「每轮最多几条」压制，并强制带声音。</em>
+      <div class="row" style="flex-wrap:wrap;gap:6px">
+        <input class="in grow" id="alKeyword" placeholder="品牌或型号，如 zephyrus g14 / razer（多个词要全中）">
+        <select class="in w110" id="alRetailer">
+          <option value="any">不限商家</option>
+          <option value="bestbuy">Best Buy</option>
+          <option value="bh">B&amp;H</option>
+          <option value="amazon">Amazon</option>
+        </select>
+        <input class="in w90" id="alPct" type="number" min="0" placeholder="降幅 %" value="15">
+        <input class="in w90" id="alAmt" type="number" min="0" placeholder="降幅 $">
+        <input class="in w90" id="alMax" type="number" min="0" placeholder="价格上限">
+        <label class="chk"><input type="checkbox" id="alQuiet"> 免打扰也提醒</label>
+        <button class="btn primary sm" id="btnAddAlert">添加</button>
+      </div>
+      <div class="catList" id="alertList"></div>
     </div>
 
     <div class="card">

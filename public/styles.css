@@ -552,3 +552,10 @@ tr:hover .rowBtn { opacity: 1; }
   #boardTable th:nth-child(4), #boardTable td:nth-child(4),
   #evTable th:nth-child(5), #evTable td:nth-child(5) { display: none; }
 }
+
+/* 已售罄。默认不再把缺货行藏起来（"标出来"才是用户要的），
+   但必须一眼能和能买的区分开：整行压暗 + 价格划掉。 */
+.grid tbody tr.oos { opacity: .45; }
+.grid tbody tr.oos:hover { opacity: .75; }
+.grid tbody tr.oos .price .now { text-decoration: line-through; text-decoration-thickness: 1px; }
+.badge.oos { background: rgba(244,115,122,.14); color: var(--up); }
