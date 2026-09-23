@@ -76,18 +76,47 @@ export class Browser {
     // 定时轮次正在跑的时候，界面上点「立即运行」/「测浏览器」、或者调 /api/preview
     // 就会撞上；轮次越长撞得越勤。
     // 第一次仍用共享 profile（cookie 留着，挑战页少一些），撞锁了就换个独占目录重来。
-    let lastErr = null;
-    for (const dir of [profileDir, `${profileDir}-${process.pid}-${Date.now().toString(36)}`]) {
+    // 1) 共享 profile（留着 cookie，挑战页少一些）
+    try {
+      return await Browser.#spawnAndConnect(found, { profileDir, headless, width, height, timeout });
+    } catch (e) {
+      if (e.code !== 'LAUNCH_FAILED') throw e;   // 超时、找不到浏览器之类别瞎重试
+    }
+
+    // 2) 起不来多半是上次被强杀留下的残锁。Windows 上**被进程打开着的文件删不掉**，
+    //    所以"能删掉 = 没人在用 = 残锁"，删了原地再试一次，不必另开目录。
+    if (Browser.#clearStaleLock(profileDir)) {
+      log.info('清掉了共享 profile 的残留锁，重试');
       try {
-        return await Browser.#spawnAndConnect(found, { profileDir: dir, headless, width, height, timeout });
+        return await Browser.#spawnAndConnect(found, { profileDir, headless, width, height, timeout });
       } catch (e) {
-        lastErr = e;
-        // 只有"进程直接退出"才可能是 profile 冲突；超时、找不到浏览器之类别瞎重试
         if (e.code !== 'LAUNCH_FAILED') throw e;
-        log.warn('浏览器 profile 可能被另一个实例占着，改用独占目录重试');
       }
     }
-    throw lastErr;
+
+    // 3) 真被别的实例占着（比如界面上手动运行 + 定时轮次同时开）→ 用一次性的独占目录，
+    //    **关浏览器时删掉**。以前不删，每次回退都在 %TEMP% 留一个，实测攒了 143 个、10.4 GB。
+    const tempDir = `${profileDir}-${process.pid}-${Date.now().toString(36)}`;
+    log.warn('共享 profile 正被另一个实例使用，改用一次性独占目录（用完即删）');
+    try {
+      const b = await Browser.#spawnAndConnect(found, { profileDir: tempDir, headless, width, height, timeout });
+      b.tempProfile = tempDir;
+      return b;
+    } catch (e) {
+      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      throw e;
+    }
+  }
+
+  static #clearStaleLock(dir) {
+    const lock = path.join(dir, 'lockfile');
+    if (!fs.existsSync(lock)) return false;
+    try {
+      fs.unlinkSync(lock);
+      return true;
+    } catch {
+      return false;   // 删不掉 = 真有进程在用
+    }
   }
 
   static async #spawnAndConnect(found, { profileDir, headless, width, height, timeout }) {
