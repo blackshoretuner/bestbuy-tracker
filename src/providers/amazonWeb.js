@@ -134,12 +134,20 @@ export class AmazonSession {
 
   async open() {
     if (this.browser) return;
-    this.browser = await Browser.launch({
+    // 熔断：这个 session 里浏览器已经起不来过一次，就别每条搜索都再拉一遍。
+    // 踩过：浏览器起不来时 23 条搜索各试 2 次，20 秒里拉起约 46 个 Edge，把机器卡死。
+    if (this.launchError) throw this.launchError;
+    try {
+      this.browser = await Browser.launch({
       exePath: this.settings.browserPath || undefined,
       headless: this.settings.browserHeadless !== false,
       width: 1600,
       height: 1400,
     });
+    } catch (e) {
+      this.launchError = e;
+      throw e;
+    }
     this.page = await this.browser.newPage({ width: 1600, height: 1400 });
   }
 

@@ -252,12 +252,26 @@ export class Browser {
 
   async close() {
     if (this.#closed) return;
+    // 先走 CDP 让浏览器**自己**退出 —— 它会正常释放 profile 锁。
+    // 以前是 proc.kill()（Windows 上就是 TerminateProcess 强杀）+ 等 150ms，
+    // Edge 根本来不及收尾，每次都在共享 profile 里留下残锁，下一次启动必撞，
+    // 然后回退到一次性目录……这是 143 个 / 10.4 GB 临时目录的源头。
+    try { await this.send('Browser.close', {}, undefined, 2000); } catch { /* 已经断了就算了 */ }
     this.#closed = true;
     try { this.#ws.close(); } catch { /* ignore */ }
-    try { this.#proc.kill(); } catch { /* ignore */ }
-    // 给它一点时间体面退出，不然 profile 目录会留锁
-    await sleep(150);
-    try { if (this.#proc.exitCode === null) this.#proc.kill('SIGKILL'); } catch { /* ignore */ }
+
+    // 等它真的退出，最多 3 秒；超时才强杀
+    const deadline = Date.now() + 3000;
+    while (this.#proc.exitCode === null && Date.now() < deadline) await sleep(100);
+    if (this.#proc.exitCode === null) {
+      try { this.#proc.kill('SIGKILL'); } catch { /* ignore */ }
+    }
+
+    // 一次性目录用完即删
+    if (this.tempProfile) {
+      await sleep(300);   // 进程退了文件句柄还要一会儿才放
+      try { fs.rmSync(this.tempProfile, { recursive: true, force: true }); } catch { /* 下次清理兜底 */ }
+    }
   }
 }
 
