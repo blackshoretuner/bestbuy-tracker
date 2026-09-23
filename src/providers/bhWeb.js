@@ -9,6 +9,8 @@
  * 为什么单独一个文件而不是复用 bestbuyWeb：两家的 URL、卡片结构、价格写法
  * 完全不同（尤其是价格，见 EXTRACT_LIST 的注释），硬凑一套只会互相绊脚。
  */
+import os from 'node:os';
+import path from 'node:path';
 import { Browser, BrowserError } from '../browser/cdp.js';
 import { extractSpecs } from '../specs.js';
 import { log, money, num, sleep } from '../util.js';
@@ -165,6 +167,10 @@ export class BhSession {
     try {
       this.browser = await Browser.launch({
       exePath: this.settings.browserPath || undefined,
+      // 每家零售商一个**固定**的 profile：cookie 能跨轮次保留，
+      // 而且不用跟 Best Buy 抢共享 profile —— 以前 B&H/Amazon 每轮都只能拿一次性空目录，
+      // 对网站来说每次都是陌生访客。
+      profileDir: path.join(os.tmpdir(), 'bbt-browser-profile-bh'),
       headless: this.settings.browserHeadless !== false,
       width: 1600,
       height: 1400,

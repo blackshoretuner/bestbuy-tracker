@@ -12,6 +12,8 @@
  *                ↑完整现价先出现            ↑原价写作 List:
  * 所以这里取第一个完整 $x.xx 就是现价，不需要像 B&H 那样拼整数和小数。
  */
+import os from 'node:os';
+import path from 'node:path';
 import { Browser, BrowserError } from '../browser/cdp.js';
 import { extractSpecs } from '../specs.js';
 import { log, money, num, sleep } from '../util.js';
@@ -140,6 +142,10 @@ export class AmazonSession {
     try {
       this.browser = await Browser.launch({
       exePath: this.settings.browserPath || undefined,
+      // 每家零售商一个**固定**的 profile：cookie 能跨轮次保留，
+      // 而且不用跟 Best Buy 抢共享 profile —— 以前 B&H/Amazon 每轮都只能拿一次性空目录，
+      // 对网站来说每次都是陌生访客。
+      profileDir: path.join(os.tmpdir(), 'bbt-browser-profile-amazon'),
       headless: this.settings.browserHeadless !== false,
       width: 1600,
       height: 1400,

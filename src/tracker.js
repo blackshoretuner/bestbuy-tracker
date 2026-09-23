@@ -501,7 +501,20 @@ export class Tracker extends EventEmitter {
 
   /** 跑一批搜索。抽出来是为了让"全是 B&H"的情况能跳过 Best Buy 的通道检查。 */
   async #runSearchList(searches, settings, notifiable, session, out, bag) {
-    for (const search of searches) {
+    // 本轮已经把我们挡在门外的零售商。被挡一次就停手，本轮不再去撞同一家 ——
+    // 实测 B&H 弹「请稍候…」后，剩下 5 条 B&H 搜索还是逐条去撞同一个拦截页，
+    // 对正在拦截的网站连续发请求既不礼貌也白耗时间。下一轮再试。
+    const blocked = new Set();
+
+    for (const [i, search] of searches.entries()) {
+      const shop = search.retailer || 'bestbuy';
+      if (blocked.has(shop)) {
+        store.updateSearch(search.id, {
+          lastError: '本轮这家零售商已拦截访问，跳过（下一轮再试）',
+          lastRunAt: Date.now(),
+        });
+        continue;
+      }
       try {
         const res = await this.runSearchOnce(search, settings, { record: true, notifiable, session, bag });
         out.searchesRun++;
@@ -512,6 +525,11 @@ export class Tracker extends EventEmitter {
         store.updateSearch(search.id, { lastError: msg, lastRunAt: Date.now() });
         out.errors.push(`搜索「${search.name}」：${msg}`);
         log.error(`搜索「${search.name}」失败`, msg);
+        if (e.code === 'BLOCKED') {
+          blocked.add(shop);
+          const rest = searches.slice(i + 1).filter((s) => (s.retailer || 'bestbuy') === shop).length;
+          if (rest) log.warn(`${shop} 拦截了访问，本轮跳过它剩下的 ${rest} 条搜索`);
+        }
       }
       await sleep(150);
     }
