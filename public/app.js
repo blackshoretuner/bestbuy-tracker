@@ -982,6 +982,15 @@ function fillSettings() {
   $('#setToast').checked = s.notify.toast;
   $('#setSound').checked = s.notify.sound;
   $('#setOnlyWatch').checked = s.notify.onlyWatchlist;
+  const ph = s.phone || {};
+  $('#phEnabled').checked = !!ph.enabled;
+  $('#phProvider').value = ph.provider || 'ntfy';
+  $('#phTopic').value = ph.ntfyTopic || '';
+  $('#phNtfyServer').value = ph.ntfyServer || '';
+  $('#phBarkKey').value = ph.barkKey || '';
+  $('#phBarkServer').value = ph.barkServer || '';
+  $('#phOnlyAlerts').checked = ph.onlyAlerts !== false;
+  togglePhoneProvider();
   $('#dataDir').textContent = s.dataDir || state.dataDir || '—';
 
   const lc = state.status?.lastCycle;
@@ -1011,6 +1020,15 @@ $('#btnSaveSettings').addEventListener('click', async () => {
       toast: $('#setToast').checked,
       sound: $('#setSound').checked,
       onlyWatchlist: $('#setOnlyWatch').checked,
+    },
+    phone: {
+      enabled: $('#phEnabled').checked,
+      provider: $('#phProvider').value,
+      ntfyTopic: $('#phTopic').value.trim(),
+      ntfyServer: $('#phNtfyServer').value.trim() || 'https://ntfy.sh',
+      barkKey: $('#phBarkKey').value.trim(),
+      barkServer: $('#phBarkServer').value.trim() || 'https://api.day.app',
+      onlyAlerts: $('#phOnlyAlerts').checked,
     },
   };
   const key = $('#setApiKey').value.trim();
@@ -1093,6 +1111,22 @@ function fmtLog(l) {
   return `<span class="t">${t}</span> <span class="lv-${esc(l.level)}">${esc(l.msg)}</span>${l.extra ? ' ' + esc(l.extra) : ''}`;
 }
 
+
+/* ---------------- 手机推送 ---------------- */
+function togglePhoneProvider() {
+  const bark = $('#phProvider').value === 'bark';
+  $('#phNtfy').hidden = bark;
+  $('#phBark').hidden = !bark;
+}
+$('#phProvider').addEventListener('change', togglePhoneProvider);
+
+// 主题名就是密码，给个足够长的随机串，别让人自己起一个好猜的
+$('#btnGenTopic').addEventListener('click', () => {
+  const rnd = crypto.getRandomValues(new Uint8Array(12));
+  const alphabet = 'abcdefghijkmnpqrstuvwxyz23456789';   // 去掉易混的 0/o/1/l
+  $('#phTopic').value = 'bbt-' + [...rnd].map((b) => alphabet[b % alphabet.length]).join('');
+  toast('已生成主题名。记得保存设置，再到手机 ntfy 里订阅同一个名字', 'ok');
+});
 
 /* ---------------- 特别关注 ---------------- */
 async function loadAlerts() {

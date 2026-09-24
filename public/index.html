@@ -323,6 +323,37 @@
     </div>
 
     <div class="card">
+      <h3>手机推送</h3>
+      <em class="fieldHint">不在电脑前也能收到。默认只推「特别关注」的命中，普通降价推到手机太吵。</em>
+      <label class="chk"><input type="checkbox" id="phEnabled"> 启用手机推送</label>
+      <label class="field">
+        <span>通道</span>
+        <select class="in" id="phProvider">
+          <option value="ntfy">ntfy（iOS / Android，免注册）</option>
+          <option value="bark">Bark（仅 iOS）</option>
+        </select>
+      </label>
+      <div id="phNtfy">
+        <label class="field">
+          <span>主题名 <em class="fieldHint" style="display:inline">（就是密码 —— 谁知道谁就能收到，别用好猜的）</em></span>
+          <div class="row">
+            <input class="in grow" id="phTopic" placeholder="字母数字 - _，如 bbt-8f3k2q9x7m">
+            <button class="btn sm" id="btnGenTopic" type="button">随机生成</button>
+          </div>
+        </label>
+        <em class="fieldHint">手机装 <b>ntfy</b> App → 点 + 订阅 → 填同一个主题名。自建服务器的话改下面这个地址。</em>
+        <label class="field"><span>服务器</span><input class="in" id="phNtfyServer" placeholder="https://ntfy.sh"></label>
+      </div>
+      <div id="phBark" hidden>
+        <label class="field"><span>设备 key</span><input class="in" id="phBarkKey" placeholder="Bark App 首页那串 key"></label>
+        <label class="field"><span>服务器</span><input class="in" id="phBarkServer" placeholder="https://api.day.app"></label>
+      </div>
+      <label class="chk"><input type="checkbox" id="phOnlyAlerts"> 只推特别关注（关掉则普通降价也推，每轮最多 3 条）</label>
+      <div class="row"><button class="btn sm" data-diag="phone">测手机</button>
+        <em class="fieldHint" style="margin:0">先点下面「保存设置」再测</em></div>
+    </div>
+
+    <div class="card">
       <h3>特别关注</h3>
       <em class="fieldHint">盯住某个品牌或型号，大降价第一时间弹通知。<b>命中时会绕开上面的全局降幅阈值</b>，
         也不受「每轮最多几条」压制，并强制带声音。</em>
