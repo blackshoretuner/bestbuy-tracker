@@ -16,6 +16,7 @@ import { pingScrape, scrapeProduct } from './src/providers/scrape.js';
 import { WebSession, pingWeb } from './src/providers/bestbuyWeb.js';
 import { findBrowser } from './src/browser/cdp.js';
 import { pingNotify } from './src/notify.js';
+import { pingPhone } from './src/phone.js';
 import { isComponent, isComputer, FORM_LABEL } from './src/specs.js';
 import { buildTierIndex, crossSection, dealScore, historyPercentile } from './src/analytics.js';
 import { csvEscape, getLogs, log, num, onLog, parseSkuFromInput, uid } from './src/util.js';
@@ -657,6 +658,7 @@ route('POST', '/api/diagnose', async (req, res) => {
   if (which === 'all' || which === 'api') out.api = await pingApi(s.apiKey).catch((e) => ({ ok: false, detail: e.message }));
   if (which === 'scrape') out.scrape = await pingScrape();
   if (which === 'all' || which === 'notify') out.notify = await pingNotify();
+  if (which === 'phone') out.phone = await pingPhone(s);
   json(res, { ok: true, results: out });
 });
 

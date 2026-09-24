@@ -83,6 +83,19 @@ export const DEFAULT_SETTINGS = {
     maxPerCycle: 6,
   },
 
+  // ---- 手机推送 ----
+  // 电脑前不在的时候也能收到。详见 src/phone.js。
+  phone: {
+    enabled: false,
+    provider: 'ntfy',              // ntfy（iOS/Android，免注册）| bark（iOS）
+    ntfyServer: 'https://ntfy.sh', // 自建 ntfy 的话改这里
+    ntfyTopic: '',                 // 主题名就是密码，用随机长串
+    barkServer: 'https://api.day.app',
+    barkKey: '',
+    onlyAlerts: true,              // 只推特别关注的命中；关掉则普通降价也推（限量）
+    maxPerCycle: 3,                // 普通降价每轮最多推几条（特别关注不受限）
+  },
+
   // ---- 网络 ----
   requestsPerSecond: 4,          // 官方 API 限速 5 req/s
   scrapeDelayMs: 2500,           // 抓取模式下每个请求之间的间隔

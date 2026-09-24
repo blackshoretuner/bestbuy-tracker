@@ -13,6 +13,7 @@ import { AmazonSession } from './providers/amazonWeb.js';
 import { isComponent, isComputer } from './specs.js';
 import { matchAlert } from './alerts.js';
 import { notifyDrops } from './notify.js';
+import { pushDrops } from './phone.js';
 import { createLimiter, inQuietHours, log, money, sleep } from './util.js';
 
 /** 不走 Best Buy 通道的零售商 —— 各有自己的 provider 和 session */
@@ -197,7 +198,8 @@ export class Tracker extends EventEmitter {
       if (muted) log.info(`免打扰时段，${muted} 条降价只写入历史记录，不弹通知`);
       if (urgent.length) {
         if (quiet) log.info(`免打扰时段，但有 ${urgent.length} 条命中了「免打扰也提醒」的特别关注`);
-        await notifyDrops(urgent, settings);
+        // 桌面通知和手机推送并行：手机那边网络慢或失败，不该拖住桌面通知，反之亦然
+        await Promise.allSettled([notifyDrops(urgent, settings), pushDrops(urgent, settings)]);
       }
     } catch (e) {
       log.warn('通知发送异常', e.message);
