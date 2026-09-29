@@ -119,6 +119,10 @@ const PAGE_HEALTH = String.raw`(() => {
     // Amazon 的拦截页文案很特征：'Enter the characters you see below' /
     // 'Sorry, we just need to make sure you're not a robot'
     blockedText: /enter the characters you see|not a robot|automated access|api-services-support@amazon/i.test(t),
+    // 通用错误页（标题 "Sorry! Something went wrong!"）。对自动访问常这么回，而且一来就连着来 ——
+    // 2026-09-28 实测一轮里 7 条搜索全吃了这个页，旧代码当空结果处理、一条条接着请求。
+    // 按「被拒」算：本轮停手，下一轮再试
+    errorPage: /^sorry!?\s*something went wrong/i.test(document.title),
     visibleCaptcha: !!document.querySelector('form[action*="validateCaptcha"]'),
     hasProducts: !!document.querySelector('[data-asin]'),
     noResults: /no results for|did not match any products/i.test(t),
@@ -179,9 +183,10 @@ export class AmazonSession {
     this.loads++;
     await this.page.goto(url, { timeout: this.settings.requestTimeoutMs || 40000, settleMs: 3000 });
     const health = await this.page.evaluate(PAGE_HEALTH);
-    const reallyBlocked = !health?.hasProducts && (health?.blockedText || health?.visibleCaptcha);
+    const reallyBlocked = !health?.hasProducts && (health?.blockedText || health?.visibleCaptcha || health?.errorPage);
     if (reallyBlocked) {
-      throw new BlockedError(health.visibleCaptcha ? '出现了验证码' : health.title || '挑战页');
+      const detail = health.visibleCaptcha ? '出现了验证码' : health.errorPage ? `返回错误页「${health.title}」` : health.title || '挑战页';
+      throw new BlockedError(detail);
     }
     return health;
   }
