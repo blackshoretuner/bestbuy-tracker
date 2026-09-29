@@ -38,6 +38,109 @@ export class BrowserError extends Error {
 }
 
 /* ------------------------------------------------------------------ */
+/* 启动与回收的辅助                                                     */
+/* ------------------------------------------------------------------ */
+
+// 本进程手里正在用的浏览器（按 DevTools 地址）。认领"转交出去的浏览器"时排除自己人。
+const liveBrowsers = new Set();
+
+// 同一个 profile 目录的启动排队。两次启动挤在同一秒里时，后一个可能把前一个刚起的
+// 浏览器当成"自己转交出去的"认领走，用完还把它关了 —— 排个队就不会。
+const launchQueue = new Map();
+function serialize(key, fn) {
+  const run = (launchQueue.get(key) || Promise.resolve()).then(fn);
+  const tail = run.catch(() => {});
+  launchQueue.set(key, tail);
+  tail.then(() => { if (launchQueue.get(key) === tail) launchQueue.delete(key); });
+  return run;
+}
+
+/** 读 <profile>/DevToolsActivePort（Chromium 开了远程调试就会写）→ ws 地址 */
+function readDevToolsPort(dir) {
+  try {
+    const [port, p] = fs.readFileSync(path.join(dir, 'DevToolsActivePort'), 'utf8').split(/\r?\n/);
+    if (!/^\d+$/.test(port) || !p?.startsWith('/devtools/browser/')) return null;
+    return `ws://127.0.0.1:${port}${p.trim()}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 等浏览器真正放开这个 profile。判据和 #clearStaleLock 一样：Windows 上被进程
+ * 打开着的文件删不掉，所以 lockfile 删得掉（或者本来就没有）= 没人在用了。
+ */
+async function waitForRelease(dir, ms) {
+  const lock = path.join(dir, 'lockfile');
+  const deadline = Date.now() + ms;
+  for (;;) {
+    try { fs.unlinkSync(lock); return true; } catch (e) { if (e.code === 'ENOENT') return true; }
+    if (Date.now() >= deadline) return false;
+    await sleep(150);
+  }
+}
+
+/** 删目录。浏览器刚退时文件句柄还没放完，重试一会儿；异步删，不卡事件循环 */
+async function removeDir(dir) {
+  try {
+    await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// 一次性目录的名字：<共享目录名>-<pid>-<创建时间，36 进制>（见 launch() 第 3 步）
+const ONE_TIME_RE = /^bbt-browser-profile(?:-[a-z]+)?-(\d+)-([a-z0-9]+)$/;
+const SWEEP_EVERY_MS = 60 * 60 * 1000;
+let lastSweepAt = 0;
+
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+/** 目录里要是还开着没人管的浏览器，接上去让它自己退出。返回是否真关掉了一个 */
+async function closeOrphan(dir) {
+  const url = readDevToolsPort(dir);
+  if (!url || liveBrowsers.has(url)) return false;
+  let ws;
+  try { ws = await connectWs(url, 1500); } catch { return false; }   // 没人听 = 浏览器早不在了
+  await new Promise((resolve) => {
+    const t = setTimeout(resolve, 2000);
+    ws.addEventListener('close', () => { clearTimeout(t); resolve(); }, { once: true });
+    try { ws.send(JSON.stringify({ id: 1, method: 'Browser.close' })); } catch { clearTimeout(t); resolve(); }
+  });
+  try { ws.close(); } catch { /* ignore */ }
+  await waitForRelease(dir, 5000);
+  return true;
+}
+
+/**
+ * 回收残留的一次性 profile 目录：里面还开着浏览器的先让它体面退出，再删目录。
+ *
+ * 只动名字符合一次性格式的 —— 共享 profile 留着 cookie，永远不碰。
+ * 可能还在用的跳过：本进程建的且不到 1 小时；别的活着的进程建的且不到 12 小时
+ * （同一台机器上可能跑着另一份拷贝）。一轮查询远用不了这么久。
+ */
+export async function sweepStaleProfiles({ baseDir = os.tmpdir(), now = Date.now() } = {}) {
+  const out = { removed: 0, closed: 0, failed: 0 };
+  let names = [];
+  try { names = fs.readdirSync(baseDir); } catch { return out; }
+  for (const name of names) {
+    const m = name.match(ONE_TIME_RE);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    const age = now - parseInt(m[2], 36);
+    if (pid === process.pid ? age < 3600e3 : pidAlive(pid) && age < 12 * 3600e3) continue;
+    const dir = path.join(baseDir, name);
+    if (await closeOrphan(dir)) out.closed++;
+    if (await removeDir(dir)) out.removed++;
+    else out.failed++;
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
 /* Browser                                                             */
 /* ------------------------------------------------------------------ */
 export class Browser {
@@ -72,40 +175,56 @@ export class Browser {
       );
     }
 
+    // 顺手回收以前留下的一次性目录。每小时最多一次，后台跑，不耽误这次启动
+    if (Date.now() - lastSweepAt > SWEEP_EVERY_MS) {
+      lastSweepAt = Date.now();
+      sweepStaleProfiles()
+        .then((r) => {
+          const bits = [];
+          if (r.closed) bits.push(`关掉 ${r.closed} 个没人管的浏览器`);
+          if (r.removed) bits.push(`删掉 ${r.removed} 个残留的一次性 profile 目录`);
+          if (r.failed) bits.push(`${r.failed} 个还被占着删不掉，下次再试`);
+          if (bits.length) log.info('回收：' + bits.join('，'));
+        })
+        .catch(() => { /* 下次再说 */ });
+    }
+
     // 同一个 user-data-dir 被两个浏览器实例同时用 → Edge/Chrome 直接退出（code 21）。
     // 定时轮次正在跑的时候，界面上点「立即运行」/「测浏览器」、或者调 /api/preview
     // 就会撞上；轮次越长撞得越勤。
     // 第一次仍用共享 profile（cookie 留着，挑战页少一些），撞锁了就换个独占目录重来。
-    // 1) 共享 profile（留着 cookie，挑战页少一些）
-    try {
-      return await Browser.#spawnAndConnect(found, { profileDir, headless, width, height, timeout });
-    } catch (e) {
-      if (e.code !== 'LAUNCH_FAILED') throw e;   // 超时、找不到浏览器之类别瞎重试
-    }
-
-    // 2) 起不来多半是上次被强杀留下的残锁。Windows 上**被进程打开着的文件删不掉**，
-    //    所以"能删掉 = 没人在用 = 残锁"，删了原地再试一次，不必另开目录。
-    if (Browser.#clearStaleLock(profileDir)) {
-      log.info('清掉了共享 profile 的残留锁，重试');
+    return serialize(profileDir, async () => {
+      // 1) 共享 profile（留着 cookie，挑战页少一些）
       try {
         return await Browser.#spawnAndConnect(found, { profileDir, headless, width, height, timeout });
       } catch (e) {
-        if (e.code !== 'LAUNCH_FAILED') throw e;
+        if (e.code !== 'LAUNCH_FAILED') throw e;   // 超时、找不到浏览器之类别瞎重试
       }
-    }
 
-    // 3) 真被别的实例占着（比如界面上手动运行 + 定时轮次同时开）→ 用一次性的独占目录，
-    //    **关浏览器时删掉**。以前不删，每次回退都在 %TEMP% 留一个，实测攒了 143 个、10.4 GB。
-    const tempDir = `${profileDir}-${process.pid}-${Date.now().toString(36)}`;
-    log.warn('共享 profile 正被另一个实例使用，改用一次性独占目录（用完即删）');
-    try {
-      const b = await Browser.#spawnAndConnect(found, { profileDir: tempDir, headless, width, height, timeout });
-      b.tempProfile = tempDir;
-      return b;
-    } catch (e) {
-      try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
-      throw e;
-    }
+      // 2) 起不来多半是上次被强杀留下的残锁。Windows 上**被进程打开着的文件删不掉**，
+      //    所以"能删掉 = 没人在用 = 残锁"，删了原地再试一次，不必另开目录。
+      if (Browser.#clearStaleLock(profileDir)) {
+        log.info('清掉了共享 profile 的残留锁，重试');
+        try {
+          return await Browser.#spawnAndConnect(found, { profileDir, headless, width, height, timeout });
+        } catch (e) {
+          if (e.code !== 'LAUNCH_FAILED') throw e;
+        }
+      }
+
+      // 3) 真被别的实例占着（比如界面上手动运行 + 定时轮次同时开）→ 用一次性的独占目录，
+      //    **关浏览器时删掉**。以前不删，每次回退都在 %TEMP% 留一个，实测攒了 143 个、10.4 GB。
+      const tempDir = `${profileDir}-${process.pid}-${Date.now().toString(36)}`;
+      log.warn('共享 profile 正被另一个实例使用，改用一次性独占目录（用完即删）');
+      try {
+        const b = await Browser.#spawnAndConnect(found, { profileDir: tempDir, headless, width, height, timeout });
+        b.tempProfile = tempDir;
+        return b;
+      } catch (e) {
+        await removeDir(tempDir);
+        throw e;
+      }
+    });
   }
 
   static #clearStaleLock(dir) {
@@ -121,6 +240,13 @@ export class Browser {
 
   static async #spawnAndConnect(found, { profileDir, headless, width, height, timeout }) {
     fs.mkdirSync(profileDir, { recursive: true });
+
+    // 旧的端口文件先删掉：这样之后这里再出现的，一定是这次启动的浏览器写的（见 onExit）。
+    // 删不掉就不信它，转交出去的浏览器也不去认领
+    const portFile = path.join(profileDir, 'DevToolsActivePort');
+    let portFileFresh = true;
+    try { fs.unlinkSync(portFile); } catch (e) { portFileFresh = e.code === 'ENOENT'; }
+    const startedAt = Date.now();
 
     const args = [
       headless ? '--headless=new' : '--window-position=-32000,-32000',
@@ -142,27 +268,46 @@ export class Browser {
 
     const proc = spawn(found.path, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 
+    let detached = false;
     const wsUrl = await new Promise((resolve, reject) => {
       let buf = '';
-      const timer = setTimeout(() => {
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         cleanup();
+        fn(value);
+      };
+      const timer = setTimeout(() => {
         try { proc.kill(); } catch { /* ignore */ }
-        reject(new BrowserError(`浏览器启动超时（${timeout}ms）`, 'LAUNCH_TIMEOUT'));
+        finish(reject, new BrowserError(`浏览器启动超时（${timeout}ms）`, 'LAUNCH_TIMEOUT'));
       }, timeout);
 
       const onData = (chunk) => {
         buf += chunk.toString();
         const m = buf.match(/DevTools listening on (ws:\/\/\S+)/);
-        if (m) {
-          clearTimeout(timer);
-          cleanup();
-          resolve(m[1].trim());
-        }
+        if (m) finish(resolve, m[1].trim());
       };
-      const onExit = (code) => {
-        clearTimeout(timer);
+      const onExit = async (code) => {
         cleanup();
-        reject(new BrowserError(`浏览器进程退出（code ${code}）：${buf.slice(-300)}`, 'LAUNCH_FAILED'));
+        // Edge 有时会把自己"转交"给另一个进程：我们起的这个以 code 0 退出，真浏览器是
+        // 另一个进程（父进程不是我们），stderr 也不在我们的管道上。2026-09-24~25 那一版
+        // Edge 一直这样（多半是有更新在排队）。以前这里直接判失败，那个真浏览器就没人管了
+        // —— 无头开着一跑十几个小时，每轮 3 个，一天攒了 40 多个、11 GB。
+        // 它照样会把调试端口写进 DevToolsActivePort，读这个文件接上它就能正常用、正常关。
+        if (code === 0 && portFileFresh) {
+          const deadline = Math.min(Date.now() + 8000, startedAt + timeout);
+          while (!settled && Date.now() < deadline) {
+            const url = readDevToolsPort(profileDir);
+            if (url && !liveBrowsers.has(url)) {
+              detached = true;
+              return finish(resolve, url);
+            }
+            await sleep(200);
+          }
+        }
+        finish(reject, new BrowserError(`浏览器进程退出（code ${code}）：${buf.slice(-300)}`, 'LAUNCH_FAILED'));
       };
       function cleanup() {
         proc.stderr?.off('data', onData);
@@ -174,10 +319,20 @@ export class Browser {
       proc.on('exit', onExit);
     });
 
-    const ws = await connectWs(wsUrl, timeout);
-    const browser = new Browser(proc, ws, { ...found, headless });
+    let ws;
+    try {
+      ws = await connectWs(wsUrl, timeout);
+    } catch (e) {
+      // 认领到了却连不上：按启动失败算，让 launch() 接着走回退
+      if (detached) throw new BrowserError(`浏览器转交给了另一个进程，但连不上它：${e.message}`, 'LAUNCH_FAILED');
+      throw e;
+    }
+    const browser = new Browser(proc, ws, { ...found, headless, detached });
+    browser.profileDir = profileDir;
+    browser.wsUrl = wsUrl;
+    liveBrowsers.add(wsUrl);
     browser.#attach();
-    log.info(`浏览器已启动：${found.name}${headless ? '（无头）' : '（窗口移到屏幕外）'}`);
+    log.info(`浏览器已启动：${found.name}${headless ? '（无头）' : '（窗口移到屏幕外）'}${detached ? '，Edge 把自己转交给了另一个进程，已接上' : ''}`);
     return browser;
   }
 
@@ -205,6 +360,7 @@ export class Browser {
 
     this.#ws.addEventListener('close', () => {
       this.#closed = true;
+      liveBrowsers.delete(this.wsUrl);
       for (const { reject, timer } of this.#pending.values()) {
         clearTimeout(timer);
         reject(new BrowserError('浏览器连接已断开', 'DISCONNECTED'));
@@ -258,20 +414,21 @@ export class Browser {
     // 然后回退到一次性目录……这是 143 个 / 10.4 GB 临时目录的源头。
     try { await this.send('Browser.close', {}, undefined, 2000); } catch { /* 已经断了就算了 */ }
     this.#closed = true;
+    liveBrowsers.delete(this.wsUrl);
     try { this.#ws.close(); } catch { /* ignore */ }
 
-    // 等它真的退出，最多 3 秒；超时才强杀
+    // 等它真的退出，最多 3 秒；超时才强杀。转交出去的那种 #proc 早就退了，这步直接跳过
     const deadline = Date.now() + 3000;
     while (this.#proc.exitCode === null && Date.now() < deadline) await sleep(100);
     if (this.#proc.exitCode === null) {
       try { this.#proc.kill('SIGKILL'); } catch { /* ignore */ }
     }
 
-    // 一次性目录用完即删
-    if (this.tempProfile) {
-      await sleep(300);   // 进程退了文件句柄还要一会儿才放
-      try { fs.rmSync(this.tempProfile, { recursive: true, force: true }); } catch { /* 下次清理兜底 */ }
-    }
+    // 真正的浏览器进程不一定是 #proc（Edge 会转交），所以以 profile 锁为准：放开了才算退干净
+    if (this.profileDir) await waitForRelease(this.profileDir, 5000);
+
+    // 一次性目录用完即删（删不掉的，下次 sweepStaleProfiles 兜底）
+    if (this.tempProfile) await removeDir(this.tempProfile);
   }
 }
 
