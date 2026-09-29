@@ -36,7 +36,7 @@ const OUT = path.join(DIST, APP_NAME);
 /* 要打进去的东西                                                       */
 /* ------------------------------------------------------------------ */
 const INCLUDE_DIRS = ['src', 'public'];
-const INCLUDE_FILES = ['server.js', 'package.json'];
+const INCLUDE_FILES = ['server.js', 'package.json', 'LICENSE'];
 // scripts 里只带运行时需要的，构建脚本和演示数据不进包
 const INCLUDE_SCRIPTS = ['ctl.js'];
 

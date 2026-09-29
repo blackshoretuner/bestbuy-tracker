@@ -48,8 +48,8 @@ export const DEFAULT_SETTINGS = {
   //   auto — 有 Key 走 API，没 Key 或查不到时回落到 web
   provider: 'web',               // web | api | auto
 
-  // 无头模式没有窗口、更省资源；如果被 Best Buy 挡了就关掉它，
-  // 改用真实窗口（会被移到屏幕外，你看不见）。
+  // 无头模式没有窗口、更省资源；代价是 Best Buy 每页给的商品大约只有窗口模式的一半。
+  // 关掉就用真实窗口（会被移到屏幕外，你看不见）。被拦了不归它管 —— 被拦就停手，不绕过。
   browserHeadless: true,
   browserPath: '',               // 留空自动找 Edge，再找 Chrome
   maxPagesPerSearch: 2,          // 每条搜索翻几页（一页约 15–20 台）

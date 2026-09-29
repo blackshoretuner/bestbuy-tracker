@@ -1,7 +1,8 @@
 # Best Buy 降价雷达 — 给下一个会话的交接
 
-个人自用工具：定时扫 Best Buy 的**电脑**（笔电/台式/一体机，含官翻和 Open Box），
-按配置拆列展示，判断「现在这个价到底值不值」，降价写进历史记录并弹 Windows 通知。
+个人自用工具：定时扫 Best Buy / B&H / Amazon 的**电脑**（笔电/台式/一体机，含官翻和 Open Box）
+和**配件**（显卡/CPU/内存/固态），按配置拆列展示，判断「现在这个价到底值不值」，
+降价写进历史记录并弹 Windows 通知（可选推到手机）。
 
 灵感来自 B 站「北美垃圾佬」。目标是自用捡漏，不是做内容账号。
 
@@ -41,13 +42,17 @@ src/
   config.js            默认设置；DATA_DIR 探测（可写性回退）
   store.js             JSON/JSONL 持久化，原子写
   tracker.js           调度器：轮询 → 判定 → 写事件 → 通知
-  specs.js             商品名 → cpu/gpu/ram/disk/weight/screen 拆列
+  specs.js             商品名 → cpu/gpu/ram/disk/weight/screen 拆列；识别单件配件
   analytics.js         同档横向分位 + 自身历史时间加权分位 + 评分
+  alerts.js            特别关注规则（命中时绕开全局降价阈值）
   instance.js          pid 文件 + 实例 token
   notify.js            Windows toast（WinRT，无依赖）
-  browser/cdp.js       CDP 驱动 Edge/Chrome
+  phone.js             手机推送（ntfy / Bark）
+  browser/cdp.js       CDP 驱动 Edge/Chrome；残留 profile 回收
   providers/
     bestbuyWeb.js      默认通道：浏览器读网页
+    bhWeb.js           B&H（只走分类页）
+    amazonWeb.js       Amazon（关键词搜索）
     bestbuyApi.js      官方 API（需 Key，目前用不了）
     scrape.js          裸 HTTP 兜底（基本必被拦）
 public/                原生 JS 单页，无框架
@@ -120,6 +125,13 @@ Best Buy 有独显必写在标题里，所以「没写」是很强的信号。
 （历史记录页、电脑榜）。榜上明明 122 台却显示「还没有记录」，看着就像坏了。
 新加筛选条件时记得同步 `emptyBoardMessage()` / `emptyEventsMessage()`。
 
+**Edge 会把自己「转交」给另一个进程。** 我们 spawn 的 msedge.exe 可能以 code 0 立刻退出，
+真浏览器是另一个进程 —— PID 不是我们手里那个，stderr 也不在我们的管道上。
+2026-09-24~25 那一版 Edge（有更新在排队时）一直这样；旧代码判成启动失败，真浏览器就没人管，
+无头跑了 17 个小时，一天攒了 40 多个、11 GB 的一次性 profile。现在的处理（`cdp.js`）：
+读 `<profile>/DevToolsActivePort` 接上它；「浏览器退干净了」以 profile 的 lockfile 删得掉为准，
+**不看 PID**；`sweepStaleProfiles()` 每小时回收残留的一次性目录。别改回按 PID 判断。
+
 **关机要优雅。** `Stop-Process -Force` 是 TerminateProcess，数据来不及落盘。
 走 `POST /api/shutdown`（要带 pid 文件里的 token，防浏览器 CSRF），
 卡住不响应才升级强杀。
@@ -139,13 +151,13 @@ Best Buy 有独显必写在标题里，所以「没写」是很强的信号。
 
 ---
 
-## 当前状态
+## 当前状态（2026-09-28）
 
-- 榜上约 122 台，同档可比 54 台
-- **历史分位列目前全是「—」**：价格日志刚建立，几乎每台只有一个价格点，
-  价格还没动过。需要 ≥3 天跟踪 **且** 价格确实变动过。这是数据问题不是 bug，
-  界面顶部有说明条。
-- 历史记录里「降价」也是空的，同理 —— Best Buy 促销大致按周更新。
+- 电脑榜 624 台（Best Buy 256 / Amazon 368；B&H 整机暂时 0 台），同档可比 604 台，有历史分位的 242 台
+- 硬件榜 638 件（Best Buy 227 / B&H 90 / Amazon 321），同档可比 466 件，有历史分位的 139 件
+- 历史分位要 ≥3 天跟踪 **且** 价格确实变动过才给，没给的显示「—」。这是数据问题不是 bug，
+  界面顶部有说明条
+- B&H 时不时整轮拦截（「请稍候…」），拦了就跳过本轮剩下的 B&H 搜索，下一轮再试
 
 ## 验证习惯
 

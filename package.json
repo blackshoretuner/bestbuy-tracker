@@ -2,7 +2,8 @@
   "name": "bestbuy-price-tracker",
   "version": "1.0.0",
   "private": true,
-  "description": "Best Buy 降价雷达 - 定时查询数码区(电脑/官翻/Open-Box)降价并记录历史",
+  "description": "Best Buy 降价雷达 - 定时查询 Best Buy / B&H / Amazon 的电脑与配件降价，判断值不值并记录历史",
+  "license": "MIT",
   "type": "module",
   "main": "server.js",
   "scripts": {
@@ -15,7 +16,7 @@
     "build": "node scripts/build-portable.js"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {}
 }
