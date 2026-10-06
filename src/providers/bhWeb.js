@@ -157,10 +157,19 @@ export class BhSession {
     this.page = null;
     this.loads = 0;
     this.lastLoadAt = 0;
+    this.relaunches = 0;
   }
 
   async open() {
-    if (this.browser) return;
+    if (this.browser && !this.browser.closed) return;
+    // 浏览器断了（电脑睡一觉醒来就是这样）：收拾干净、重开一个，一轮最多 2 次（同 bestbuyWeb.js）
+    if (this.browser) {
+      await this.browser.close().catch(() => {});
+      this.browser = null;
+      this.page = null;
+      if (++this.relaunches > 2) this.launchError = new BrowserError('浏览器反复断开，本轮不再重开', 'LAUNCH_FAILED');
+      else log.warn('B&H 浏览器连接断了，重开一个');
+    }
     // 熔断：这个 session 里浏览器已经起不来过一次，就别每条搜索都再拉一遍。
     // 踩过：浏览器起不来时 23 条搜索各试 2 次，20 秒里拉起约 46 个 Edge，把机器卡死。
     if (this.launchError) throw this.launchError;

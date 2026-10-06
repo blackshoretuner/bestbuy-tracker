@@ -7,7 +7,7 @@
  *
  * 只实现够用的部分：开标签页、导航、等加载、在页面里执行 JS、关掉。
  */
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -43,6 +43,9 @@ export class BrowserError extends Error {
 
 // 本进程手里正在用的浏览器（按 DevTools 地址）。认领"转交出去的浏览器"时排除自己人。
 const liveBrowsers = new Set();
+// 本进程正在用的 profile 目录。回收孤儿时跳过：转交出去的浏览器父进程早就退了，
+// 光看「父进程还在不在」会把自己正在用的那个也当成孤儿
+const liveProfiles = new Set();
 
 // 同一个 profile 目录的启动排队。两次启动挤在同一秒里时，后一个可能把前一个刚起的
 // 浏览器当成"自己转交出去的"认领走，用完还把它关了 —— 排个队就不会。
@@ -80,6 +83,74 @@ async function waitForRelease(dir, ms) {
   }
 }
 
+/**
+ * 最后一招：按命令行里**完全一致**的 --user-data-dir 找出还占着这个 profile 的
+ * Edge/Chrome 进程，直接结束。只在体面的办法（CDP Browser.close、结束我们手里的 PID、
+ * 照 DevToolsActivePort 重新接上去关）都不灵时才用 —— 比如电脑睡了一觉，连接断了、
+ * 真浏览器又不是我们手里那个 PID。
+ * 目录名是我们自己起的（bbt-browser-profile…），不会误伤你自己开的浏览器；
+ * 要求路径后面紧跟引号/空格/结尾，免得 bbt-browser-profile 误中 bbt-browser-profile-fast。
+ * @returns 结束了几个进程
+ */
+export function killByProfile(dir) {
+  if (process.platform !== 'win32' || !/bbt-browser-profile/.test(path.basename(dir))) return Promise.resolve(0);
+  const esc = (s) => s.replace(/'/g, "''");
+  // 多扫几遍：Edge 刚起来时还在不停地派生子进程，一次快照之后冒出来的会漏掉
+  const ps =
+    `$re = '--user-data-dir="?' + [regex]::Escape('${esc(dir)}') + '"?(\\s|$)'; $seen = @{}; ` +
+    `for ($i = 0; $i -lt 3; $i++) { ` +
+    `$p = @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe'" | ` +
+    `Where-Object { $_.CommandLine -and $_.CommandLine -match $re -and -not $seen.ContainsKey($_.ProcessId) }); ` +
+    `if (-not $p.Count) { break }; ` +
+    `foreach ($x in $p) { $seen[$x.ProcessId] = 1; Stop-Process -Id $x.ProcessId -Force -ErrorAction SilentlyContinue }; ` +
+    `Start-Sleep -Milliseconds 400 }; $seen.Count`;
+  // 和 notify.js 一样走 -EncodedCommand：脚本里有引号，拼进命令行容易坏
+  const encoded = Buffer.from(ps, 'utf16le').toString('base64');
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true, timeout: 20000 },
+      (err, stdout) => resolve(err ? 0 : Number(String(stdout).trim()) || 0));
+  });
+}
+
+/**
+ * 固定 profile（共享的 / 各零售商的 / 快速盯梢的）被**已经不在了的进程**留下的浏览器占着：
+ * 服务被外力结束、或者旧版本睡醒后没收拾干净，都会这样。不清掉的话，新进程每次都只能
+ * 退到一次性目录（cookie 白留了），孤儿还一直耗内存。
+ * 只结束「父进程已经不在了」的那种 —— 父进程还活着，可能是另一份拷贝正在用，不碰。
+ * @returns 结束了几个进程
+ */
+function killFixedOrphans(dirs) {
+  if (process.platform !== 'win32' || !dirs.length) return Promise.resolve(0);
+  const list = dirs.map((d) => `'${d.replace(/'/g, "''")}'`).join(',');
+  // 先认孤儿（主进程的父进程不在了），认准了再把这个 profile 上的进程多扫几遍结束（同 killByProfile）
+  const ps =
+    `$q = { @(Get-CimInstance Win32_Process -Filter "Name='msedge.exe' OR Name='chrome.exe'") }; $all = & $q; $seen = @{}; ` +
+    `foreach ($d in @(${list})) { ` +
+    `$re = '--user-data-dir="?' + [regex]::Escape($d) + '"?(\\s|$)'; ` +
+    `$mine = @($all | Where-Object { $_.CommandLine -and $_.CommandLine -match $re }); ` +
+    `$orphan = @($mine | Where-Object { $_.CommandLine -notmatch '--type=' -and -not (Get-Process -Id $_.ParentProcessId -ErrorAction SilentlyContinue) }); ` +
+    `if (-not $orphan.Count) { continue }; ` +
+    `for ($i = 0; $i -lt 3; $i++) { ` +
+    `$p = @(& $q | Where-Object { $_.CommandLine -and $_.CommandLine -match $re -and -not $seen.ContainsKey($_.ProcessId) }); ` +
+    `if (-not $p.Count) { break }; ` +
+    `foreach ($x in $p) { $seen[$x.ProcessId] = 1; Stop-Process -Id $x.ProcessId -Force -ErrorAction SilentlyContinue }; ` +
+    `Start-Sleep -Milliseconds 400 } }; $seen.Count`;
+  const encoded = Buffer.from(ps, 'utf16le').toString('base64');
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true, timeout: 20000 },
+      (err, stdout) => resolve(err ? 0 : Number(String(stdout).trim()) || 0));
+  });
+}
+
+/** 体面地放开 profile；不行就照端口文件接上去关；再不行按 profile 结束进程。返回是否放开了 */
+export async function forceRelease(dir) {
+  if (await waitForRelease(dir, 5000)) return true;
+  if ((await closeOrphan(dir)) && (await waitForRelease(dir, 3000))) return true;
+  const n = await killByProfile(dir);
+  if (n) log.warn(`浏览器退不干净，按 profile 结束了 ${n} 个残留进程：${path.basename(dir)}`);
+  return waitForRelease(dir, 3000);
+}
+
 /** 删目录。浏览器刚退时文件句柄还没放完，重试一会儿；异步删，不卡事件循环 */
 async function removeDir(dir) {
   try {
@@ -92,6 +163,8 @@ async function removeDir(dir) {
 
 // 一次性目录的名字：<共享目录名>-<pid>-<创建时间，36 进制>（见 launch() 第 3 步）
 const ONE_TIME_RE = /^bbt-browser-profile(?:-[a-z]+)?-(\d+)-([a-z0-9]+)$/;
+// 固定 profile：bbt-browser-profile / -bh / -amazon / -fast
+const FIXED_RE = /^bbt-browser-profile(?:-[a-z]+)?$/;
 const SWEEP_EVERY_MS = 60 * 60 * 1000;
 let lastSweepAt = 0;
 
@@ -134,9 +207,20 @@ export async function sweepStaleProfiles({ baseDir = os.tmpdir(), now = Date.now
     if (pid === process.pid ? age < 3600e3 : pidAlive(pid) && age < 12 * 3600e3) continue;
     const dir = path.join(baseDir, name);
     if (await closeOrphan(dir)) out.closed++;
+    if (await removeDir(dir)) { out.removed++; continue; }
+    // 还被占着又接不上：一次性目录的主人已经不在了，里面的浏览器肯定是孤儿
+    if ((await killByProfile(dir)) > 0) out.closed++;
     if (await removeDir(dir)) out.removed++;
     else out.failed++;
   }
+
+  // 固定 profile 上的孤儿（目录留着，只结束进程）。本进程正在用的跳过
+  const fixed = names
+    .filter((n) => FIXED_RE.test(n))
+    .map((n) => path.join(baseDir, n))
+    .filter((d) => !liveProfiles.has(d));
+  const killed = await killFixedOrphans(fixed);
+  if (killed) out.orphans = killed;
   return out;
 }
 
@@ -150,11 +234,17 @@ export class Browser {
   #sessionListeners = new Map();
   #proc = null;
   #closed = false;
+  #closing = false;
 
   constructor(proc, ws, info) {
     this.#proc = proc;
     this.#ws = ws;
     this.info = info;
+  }
+
+  /** 连接已经断了（关过、或者电脑睡醒后断开）。会话据此决定要不要重开一个 */
+  get closed() {
+    return this.#closed;
   }
 
   static async launch(opts = {}) {
@@ -181,6 +271,7 @@ export class Browser {
       sweepStaleProfiles()
         .then((r) => {
           const bits = [];
+          if (r.orphans) bits.push(`结束 ${r.orphans} 个上次留下的孤儿浏览器进程`);
           if (r.closed) bits.push(`关掉 ${r.closed} 个没人管的浏览器`);
           if (r.removed) bits.push(`删掉 ${r.removed} 个残留的一次性 profile 目录`);
           if (r.failed) bits.push(`${r.failed} 个还被占着删不掉，下次再试`);
@@ -323,6 +414,10 @@ export class Browser {
     try {
       ws = await connectWs(wsUrl, timeout);
     } catch (e) {
+      // 浏览器起来了却连不上：**别把它留在那儿** —— 以前这里直接抛错，进程就成了孤儿
+      //（2026-10-06 电脑睡醒后实测漏下一个）。转交出去的那个不是 proc，按 profile 收拾
+      try { proc.kill('SIGKILL'); } catch { /* ignore */ }
+      await forceRelease(profileDir);
       // 认领到了却连不上：按启动失败算，让 launch() 接着走回退
       if (detached) throw new BrowserError(`浏览器转交给了另一个进程，但连不上它：${e.message}`, 'LAUNCH_FAILED');
       throw e;
@@ -331,6 +426,7 @@ export class Browser {
     browser.profileDir = profileDir;
     browser.wsUrl = wsUrl;
     liveBrowsers.add(wsUrl);
+    liveProfiles.add(profileDir);
     browser.#attach();
     log.info(`浏览器已启动：${found.name}${headless ? '（无头）' : '（窗口移到屏幕外）'}${detached ? '，Edge 把自己转交给了另一个进程，已接上' : ''}`);
     return browser;
@@ -407,12 +503,17 @@ export class Browser {
   }
 
   async close() {
-    if (this.#closed) return;
-    // 先走 CDP 让浏览器**自己**退出 —— 它会正常释放 profile 锁。
+    if (this.#closing) return;   // 会话收摊和别处可能各调一次，只收一遍
+    this.#closing = true;
+    // 连接还在：先走 CDP 让浏览器**自己**退出 —— 它会正常释放 profile 锁。
     // 以前是 proc.kill()（Windows 上就是 TerminateProcess 强杀）+ 等 150ms，
     // Edge 根本来不及收尾，每次都在共享 profile 里留下残锁，下一次启动必撞，
     // 然后回退到一次性目录……这是 143 个 / 10.4 GB 临时目录的源头。
-    try { await this.send('Browser.close', {}, undefined, 2000); } catch { /* 已经断了就算了 */ }
+    // 连接已经断了（电脑睡了一觉醒来就是这样）也**不能就此撒手**：进程多半还活着。
+    // 以前这里一看连接断了就直接 return，睡一觉就漏下好几个无头 Edge（2026-10-06 实测 5 个）。
+    if (!this.#closed) {
+      try { await this.send('Browser.close', {}, undefined, 2000); } catch { /* 下面接着收拾 */ }
+    }
     this.#closed = true;
     liveBrowsers.delete(this.wsUrl);
     try { this.#ws.close(); } catch { /* ignore */ }
@@ -424,8 +525,14 @@ export class Browser {
       try { this.#proc.kill('SIGKILL'); } catch { /* ignore */ }
     }
 
-    // 真正的浏览器进程不一定是 #proc（Edge 会转交），所以以 profile 锁为准：放开了才算退干净
-    if (this.profileDir) await waitForRelease(this.profileDir, 5000);
+    // 真正的浏览器进程不一定是 #proc（Edge 会转交），所以以 profile 锁为准：放开了才算退干净。
+    // 放不开就照端口文件重新接上去关，再不行按 profile 结束进程（见 forceRelease）。
+    // 和启动走同一个队列：收拾的时候不会有新浏览器正在同一个 profile 上起来，免得误伤它
+    const dir = this.profileDir;
+    if (dir && !(await serialize(dir, () => forceRelease(dir)))) {
+      log.warn(`浏览器没能完全退出，profile 仍被占用：${path.basename(dir)}`);
+    }
+    if (dir) liveProfiles.delete(dir);
 
     // 一次性目录用完即删（删不掉的，下次 sweepStaleProfiles 兜底）
     if (this.tempProfile) await removeDir(this.tempProfile);
