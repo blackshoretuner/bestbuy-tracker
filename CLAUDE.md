@@ -45,6 +45,7 @@ src/
   specs.js             商品名 → cpu/gpu/ram/disk/weight/screen 拆列；识别单件配件
   analytics.js         同档横向分位 + 自身历史时间加权分位 + 评分
   alerts.js            特别关注规则（命中时绕开全局降价阈值）
+  fastwatch.js         快速盯梢：目标匹配 +「够便宜」判定（同显卡最低 / 降幅 / 价位上限）
   instance.js          pid 文件 + 实例 token
   notify.js            Windows toast（WinRT，无依赖）
   phone.js             手机推送（ntfy / Bark）
@@ -132,6 +133,22 @@ Best Buy 有独显必写在标题里，所以「没写」是很强的信号。
 读 `<profile>/DevToolsActivePort` 接上它；「浏览器退干净了」以 profile 的 lockfile 删得掉为准，
 **不看 PID**；`sweepStaleProfiles()` 每小时回收残留的一次性目录。别改回按 PID 判断。
 
+**电脑睡一觉，浏览器连接就断了。** 醒来时 CDP 命令超时、WebSocket 断开，进程却多半还活着。
+旧的 `close()` 一看连接断了就直接 return，睡一觉漏下 5 个无头 Edge（2026-10-06）。现在 `close()`
+照样收拾到底（CDP → 结束 PID → 照 DevToolsActivePort 重连去关 → 按 `--user-data-dir` 结束进程），
+会话发现浏览器断了会重开（一轮最多 2 次）。另：Node 在 Windows 上把子进程放进一个随父进程关闭的
+job，所以**服务一退，它直接拉起的浏览器就跟着没了**；孤儿只会在服务还活着时堆起来。
+
+**Best Buy 2026-10 换了新版搜索页。** 商品链接变成 `/product/<slug>/<代码>`，**不再带 `/sku/<数字>`**，
+数字 SKU 挪到卡片 `<li data-product-id>` 上；商品网格是虚拟列表，滚走的会被卸掉。只认 `/sku/`、
+「先滚到底再一次性提取」的话，含 5090 的搜索一台都抓不到。现在两种布局都认、边滚边收
+（`bestbuyWeb.js` 的 `EXTRACT_LIST`）。日志里「页面上见到 N 个 → 提取 M 台」差得多就是又改版了。
+
+**快速盯梢和全量查询都要按快速盯梢的规则判定。** 一次变化只会被看到一次：哪条通道先把新价写进榜，
+另一条就看不出它变过了。所以判定写在两边共用的 `#recordSearchResults` 里。快速盯梢的第一轮只摸底
+（`primed`），而且**每页都顺利打开才算摸过底** —— 睡醒后整轮没打开还标成已摸底的话，
+下一轮会把整个榜当成「新上架」误报。
+
 **关机要优雅。** `Stop-Process -Force` 是 TerminateProcess，数据来不及落盘。
 走 `POST /api/shutdown`（要带 pid 文件里的 token，防浏览器 CSRF），
 卡住不响应才升级强杀。
@@ -158,6 +175,8 @@ Best Buy 有独显必写在标题里，所以「没写」是很强的信号。
 - 历史分位要 ≥3 天跟踪 **且** 价格确实变动过才给，没给的显示「—」。这是数据问题不是 bug，
   界面顶部有说明条
 - B&H 时不时整轮拦截（「请稍候…」），拦了就跳过本轮剩下的 B&H 搜索，下一轮再试
+- 快速盯梢（2026-10-06 起）：用户的配置盯 ROG + RTX 5090 / 5080，每 4 分钟一轮、每轮 4 页
+  （约 1–3 分钟，和全量查询同时跑时慢一些）
 
 ## 验证习惯
 
