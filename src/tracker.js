@@ -1,4 +1,6 @@
 import { EventEmitter } from 'node:events';
+import os from 'node:os';
+import path from 'node:path';
 import { store } from './store.js';
 import {
   ApiKeyMissingError,
@@ -12,6 +14,7 @@ import { BhSession } from './providers/bhWeb.js';
 import { AmazonSession } from './providers/amazonWeb.js';
 import { isComponent, isComputer } from './specs.js';
 import { matchAlert } from './alerts.js';
+import { judgeHit, matchTarget, searchesFor, toAlertHit } from './fastwatch.js';
 import { notifyDrops } from './notify.js';
 import { pushDrops } from './phone.js';
 import { createLimiter, inQuietHours, log, money, sleep } from './util.js';
@@ -20,6 +23,12 @@ import { createLimiter, inQuietHours, log, money, sleep } from './util.js';
 const EXTERNAL_RETAILERS = new Set(['bh', 'amazon']);
 
 const BOARD_TTL_MS = 45 * 86400000;
+
+// 快速盯梢用自己固定的浏览器 profile（理由见 WebSession 构造函数的注释）
+const FAST_PROFILE_DIR = path.join(os.tmpdir(), 'bbt-browser-profile-fast');
+// 被 Best Buy 拦了，快速盯梢歇这么久再试
+const FAST_BLOCK_PAUSE_MS = 30 * 60000;
+const clampFastInterval = (v) => Math.min(30, Math.max(2, Number(v) || 4));
 
 /** 这一轮要不要开浏览器 */
 function usesWeb(settings) {
@@ -34,11 +43,17 @@ function usesApi(settings) {
 }
 
 export class Tracker extends EventEmitter {
+  // 快速盯梢的运行状态。primed：已经完整查过一轮的目标 id —— 第一轮是摸底，
+  // 榜上没有的全会算「新上架」，那是我们第一次看见，不是好价，不报。只放内存里：
+  // 重启后第一轮再摸一次底就行。
+  #fast = { inProgress: false, nextRunAt: null, lastRun: null, pausedUntil: 0, primed: new Set() };
+
   constructor() {
     super();
     this.running = false;
     this.cycleInProgress = false;
     this.timer = null;
+    this.fastTimer = null;
     this.nextRunAt = null;
     this.lastCycle = null;
     this.apiLimiter = createLimiter(250);
@@ -59,6 +74,7 @@ export class Tracker extends EventEmitter {
     const s = store.getSettings();
     if (this.running) {
       this.#schedule();
+      if (!this.fastTimer && !this.#fast.inProgress) this.#scheduleFast({ delayMs: 20000 });
       return this.status();
     }
     this.running = true;
@@ -69,6 +85,8 @@ export class Tracker extends EventEmitter {
     } else {
       this.#schedule();
     }
+    // 快速盯梢晚 20 秒起第一轮：让全量查询先把浏览器开起来。两边的页面本来就会排队
+    this.#scheduleFast({ delayMs: 20000 });
     return this.status();
   }
 
@@ -77,6 +95,9 @@ export class Tracker extends EventEmitter {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.nextRunAt = null;
+    if (this.fastTimer) clearTimeout(this.fastTimer);
+    this.fastTimer = null;
+    this.#fast.nextRunAt = null;
     log.info('定时查询已停止');
     this.#emitStatus();
     return this.status();
@@ -119,11 +140,69 @@ export class Tracker extends EventEmitter {
       quietNow: inQuietHours(s.quietHours),
       hasApiKey: !!s.apiKey,
       provider: s.provider,
+      fast: this.#fastStatus(s),
     };
   }
 
   #emitStatus() {
     this.emit('status', this.status());
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* 快速盯梢：调度                                                     */
+  /* ---------------------------------------------------------------- */
+  #fastStatus(s = store.getSettings()) {
+    const fw = s.fastWatch || {};
+    return {
+      enabled: !!fw.enabled,
+      intervalMinutes: clampFastInterval(fw.intervalMinutes),
+      targets: (fw.targets || []).filter((t) => t.enabled !== false).length,
+      inProgress: this.#fast.inProgress,
+      nextRunAt: this.#fast.nextRunAt,
+      pausedUntil: this.#fast.pausedUntil > Date.now() ? this.#fast.pausedUntil : null,
+      lastRun: this.#fast.lastRun,
+    };
+  }
+
+  /** 改了快速盯梢的设置之后调。soon = 刚打开 / 刚加了目标，几秒后就跑一轮 */
+  rescheduleFast({ soon = false } = {}) {
+    if (this.#fast.inProgress) return this.status();   // 这一轮结束时会自己排下一轮
+    // 改个目标 / 间隔：按上一轮的起点重新算（新间隔照样生效），别把倒计时重置成一整个间隔 ——
+    // 不然界面上点几下开关，下一轮就被一推再推
+    this.#scheduleFast(soon ? { delayMs: 5000 } : { from: this.#fast.lastRun?.at });
+    return this.status();
+  }
+
+  #scheduleFast({ delayMs, from } = {}) {
+    if (this.fastTimer) clearTimeout(this.fastTimer);
+    this.fastTimer = null;
+    this.#fast.nextRunAt = null;
+    const s = store.getSettings();
+    const fw = s.fastWatch || {};
+    const active = (fw.targets || []).some((t) => t.enabled !== false);
+    if (!this.running || !fw.enabled || !active) {
+      this.#emitStatus();
+      return;
+    }
+
+    let at;
+    if (delayMs != null) {
+      at = Date.now() + delayMs;
+    } else {
+      const base = clampFastInterval(fw.intervalMinutes) * 60000;
+      const jitter = base * ((s.jitterPercent || 0) / 100);
+      // 间隔按起点到起点算，才对得上「每 4 分钟查一次」；
+      // 但上一轮结束后至少歇 1 分钟，绝不连轴转
+      at = Math.max((from ?? Date.now()) + Math.round(base + (Math.random() * 2 - 1) * jitter), Date.now() + 60000);
+    }
+    if (this.#fast.pausedUntil > at) at = this.#fast.pausedUntil;   // 被拦了在歇着：歇完再说
+
+    this.#fast.nextRunAt = at;
+    this.fastTimer = setTimeout(() => {
+      this.fastTimer = null;
+      this.runFastCycle('定时').catch((e) => log.error('快速盯梢失败', e.message));
+    }, Math.max(0, at - Date.now()));
+    this.#emitStatus();
   }
 
   /* ---------------------------------------------------------------- */
@@ -183,27 +262,7 @@ export class Tracker extends EventEmitter {
       await this.#closeBag(bag);
     }
 
-    // 通知
-    try {
-      const quiet = inQuietHours(settings.quietHours);
-      const filtered = settings.notify.onlyWatchlist
-        ? notifiable.filter((d) => d.origin === 'watch')
-        : notifiable;
-      // 免打扰时段里，勾了"免打扰也弹"的特别关注仍然要通知 ——
-      // 真在等的那台机器，半夜降价也得让你知道。其余的只写历史记录。
-      const urgent = quiet
-        ? filtered.filter((d) => d.alertHit?.ignoreQuietHours)
-        : filtered;
-      const muted = quiet ? filtered.length - urgent.length : 0;
-      if (muted) log.info(`免打扰时段，${muted} 条降价只写入历史记录，不弹通知`);
-      if (urgent.length) {
-        if (quiet) log.info(`免打扰时段，但有 ${urgent.length} 条命中了「免打扰也提醒」的特别关注`);
-        // 桌面通知和手机推送并行：手机那边网络慢或失败，不该拖住桌面通知，反之亦然
-        await Promise.allSettled([notifyDrops(urgent, settings), pushDrops(urgent, settings)]);
-      }
-    } catch (e) {
-      log.warn('通知发送异常', e.message);
-    }
+    await this.#notify(notifiable, settings);
 
     // 维护
     try {
@@ -231,6 +290,118 @@ export class Tracker extends EventEmitter {
     else this.#emitStatus();
 
     return summary;
+  }
+
+  /** 发通知（桌面 + 手机）。全量查询和快速盯梢共用这一套免打扰 / 过滤规则 */
+  async #notify(notifiable, settings) {
+    if (!notifiable.length) return;
+    try {
+      const quiet = inQuietHours(settings.quietHours);
+      // 「只对关注列表通知」管的是普通降价；快速盯梢是你点名要盯的，照常通知
+      const filtered = settings.notify.onlyWatchlist
+        ? notifiable.filter((d) => d.origin === 'watch' || d.alertHit?.fast)
+        : notifiable;
+      // 免打扰时段里，勾了"免打扰也弹"的特别关注仍然要通知 ——
+      // 真在等的那台机器，半夜降价也得让你知道。其余的只写历史记录。
+      const urgent = quiet
+        ? filtered.filter((d) => d.alertHit?.ignoreQuietHours)
+        : filtered;
+      const muted = quiet ? filtered.length - urgent.length : 0;
+      if (muted) log.info(`免打扰时段，${muted} 条降价只写入历史记录，不弹通知`);
+      if (urgent.length) {
+        if (quiet) log.info(`免打扰时段，但有 ${urgent.length} 条命中了「免打扰也提醒」的规则`);
+        // 桌面通知和手机推送并行：手机那边网络慢或失败，不该拖住桌面通知，反之亦然
+        await Promise.allSettled([notifyDrops(urgent, settings), pushDrops(urgent, settings)]);
+      }
+    } catch (e) {
+      log.warn('通知发送异常', e.message);
+    }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* 快速盯梢：一轮                                                     */
+  /* ---------------------------------------------------------------- */
+  /**
+   * 只查点名的几款（每款：全新一页 + Open Box 一页），结果走和全量查询完全相同的
+   * 入榜 / 记事件流程 —— 哪条通道先看到变化，就由哪条通道记录并通知，
+   * 两边判定规则一致（见 #recordSearchResults）。只读公开搜索页，不登录、不下单。
+   *
+   * @param session 只给测试用：注入一个假的 session（有 search / close 就行），不开真浏览器
+   */
+  async runFastCycle(reason = '定时', { session: injected = null } = {}) {
+    if (this.#fast.inProgress) return this.#fast.lastRun;
+    const settings = store.getSettings();
+    const fw = settings.fastWatch || {};
+    const targets = (fw.targets || []).filter((t) => t.enabled !== false);
+    if (!fw.enabled || !targets.length) {
+      this.#scheduleFast();
+      return null;
+    }
+    // 被拦后的冷却期里谁点都不跑：刚把我们挡在门外的网站，别接着敲门
+    if (this.#fast.pausedUntil > Date.now()) {
+      this.#scheduleFast();
+      return this.#fast.lastRun;
+    }
+    if (!usesWeb(settings) && !injected) {
+      this.#fast.lastRun = {
+        reason, at: Date.now(), durationMs: 0, checked: 0, found: 0, drops: 0, hits: 0,
+        error: '快速盯梢只走浏览器通道：去「设置 → 数据源」选「浏览器读网页」',
+      };
+      this.#scheduleFast();
+      return this.#fast.lastRun;
+    }
+
+    this.#fast.inProgress = true;
+    this.#emitStatus();
+    const started = Date.now();
+    const run = { reason, at: started, durationMs: 0, checked: 0, found: 0, drops: 0, hits: 0, error: null };
+    const notifiable = [];
+    const session = injected || new WebSession(settings, { profileDir: FAST_PROFILE_DIR });
+
+    try {
+      for (const t of targets) {
+        const errorsBefore = session.pageErrors || 0;
+        for (const search of searchesFor(t)) {
+          const res = await this.runSearchOnce(search, settings, { record: true, notifiable, session });
+          run.checked += res.products.length;
+          run.found += res.newCount;
+          run.drops += res.dropCount;
+        }
+        // 每一页都顺利打开了，才算摸过底：之后再冒出来的才算「新上架」。
+        // 中途有页没打开（比如电脑睡醒后连接断了），榜上就缺一块，下一轮那些行
+        // 会全被当成「新上架」误报 —— 2026-10-06 实测睡醒后整轮 0 台，差点就这么报出去
+        if ((session.pageErrors || 0) === errorsBefore) this.#fast.primed.add(t.id);
+      }
+      const failedPages = session.pageErrors || 0;
+      if (failedPages) run.error = `${failedPages} 页没打开（这一轮看得不全）`;
+    } catch (e) {
+      run.error = e.friendly || e.message;
+      if (e.code === 'BLOCKED') {
+        this.#fast.pausedUntil = Date.now() + FAST_BLOCK_PAUSE_MS;
+        log.warn(`快速盯梢被 Best Buy 拦了，歇 ${FAST_BLOCK_PAUSE_MS / 60000} 分钟再试（不做绕过）`);
+      } else {
+        log.warn('快速盯梢这一轮出错', run.error);
+      }
+    } finally {
+      await session.close().catch(() => {});
+    }
+
+    run.hits = notifiable.filter((d) => d.alertHit?.fast).length;
+    await this.#notify(notifiable, settings);
+    if (run.checked) {
+      try { store.flushAll(); } catch (e) { log.warn('数据落盘异常', e.message); }
+    }
+
+    run.durationMs = Date.now() - started;
+    this.#fast.lastRun = run;
+    this.#fast.inProgress = false;
+    log.info(
+      `快速盯梢（${reason}）：看了 ${run.checked} 台，命中 ${run.hits} 条` +
+        `${run.error ? `，出错：${run.error}` : ''}，耗时 ${(run.durationMs / 1000).toFixed(1)}s`
+    );
+    this.emit('fast', run);
+    this.#scheduleFast({ from: started });
+    return run;
   }
 
   /* ---------------------------------------------------------------- */
@@ -602,7 +773,8 @@ export class Tracker extends EventEmitter {
         keywords: search.keywords,
         condition: search.channel === 'openbox' ? 'openbox' : search.condition,
         limit,
-        maxPages: settings.maxPagesPerSearch || 3,
+        // 快速盯梢的搜索自带 maxPages: 1（同一款旗舰就那么几个 SKU，一页足够）
+        maxPages: search.maxPages ?? (settings.maxPagesPerSearch || 3),
       });
       meta = { channel: 'web', fetched: products.length };
 
@@ -670,14 +842,27 @@ export class Tracker extends EventEmitter {
     let newCount = 0;
     let dropCount = 0;
 
+    // 快速盯梢的目标。哪条通道先看到变化就由哪条通道判定 —— 变化只会被看到一次：
+    // 全量查询先把新价写进榜了，快速盯梢下一轮就看不出它降过价了，反之亦然
+    const fw = settings.fastWatch || {};
+    const fastTargets = fw.enabled ? (fw.targets || []).filter((t) => t.enabled !== false) : [];
+    const fastCtx = (target) => ({
+      rows: store.listBoard(),
+      targets: fastTargets,
+      intervalMinutes: fw.intervalMinutes,
+      primed: this.#fast.primed.has(target.id),
+    });
+
     if (record) {
       for (const p of products) {
         const price = money(p.price);
         if (price === null) continue;
 
-        const { isNew, dropped, prevPrice, row } = store.upsertBoard({ ...p, price }, search.id);
+        const { isNew, dropped, prevPrice, wasInStock, row } = store.upsertBoard({ ...p, price }, search.id);
         // 价格轨迹：只在变价时落一个点，历史分位靠它算
         store.recordPrice(row.key, price);
+        const target = fastTargets.length ? matchTarget(row, fastTargets) : null;
+        let fastNotified = false;
 
         const evBase = {
           searchId: search.id,
@@ -696,21 +881,28 @@ export class Tracker extends EventEmitter {
 
         if (isNew) {
           newCount++;
-          store.addEvent({
+          const fastHit = target ? judgeHit(row, { type: 'found' }, target, fastCtx(target)) : null;
+          const ev = store.addEvent({
             ...evBase,
             type: 'found',
             pct: p.percentOff,
             delta: p.dollarSavings,
-            note: p.percentOff ? `新发现，比原价低 ${p.percentOff}%` : '新发现',
+            alert: fastHit ? { keyword: target.name, note: fastHit.reason, fast: true } : undefined,
+            note: fastHit
+              ? `⚡ 快速盯梢「${target.name}」· ${fastHit.reason}`
+              : p.percentOff ? `新发现，比原价低 ${p.percentOff}%` : '新发现',
           });
+          // 通知里不带 pct：found 的 pct 是标称折扣，不是我们看到的降价
+          if (fastHit) notifiable.push({ ...ev, pct: null, origin: 'search', alertHit: toAlertHit(target, fastHit) });
         } else if (dropped) {
           const delta = money(prevPrice - price);
           const pct = Math.round(((prevPrice - price) / prevPrice) * 1000) / 10;
           // 特别关注命中时**绕开全局阈值** —— 全局是"降这么多才值得打扰我"，
-          // 特别关注是"这台我盯着，标准另算"，被全局先吞掉就失去意义了。
+          // 特别关注是"这台我盯着，标准另算"，被全局先吞掉就失去意义了。快速盯梢同理。
           const hit = matchAlert({ ...p, price, retailer: p.retailer }, { pct, delta }, settings.alerts);
+          const fastHit = target ? judgeHit(row, { type: 'drop', pct }, target, fastCtx(target)) : null;
           const passes =
-            !!hit || (pct >= (settings.dropMinPercent || 0) && delta >= (settings.dropMinAmount || 0));
+            !!hit || !!fastHit || (pct >= (settings.dropMinPercent || 0) && delta >= (settings.dropMinAmount || 0));
           if (passes) {
             dropCount++;
             // upsertBoard 已经把 minPrice 更新成新价了，得跟"上一个低点"比
@@ -722,12 +914,34 @@ export class Tracker extends EventEmitter {
               delta,
               pct,
               isAllTimeLow: isLow,
-              alert: hit ? { keyword: hit.keyword, note: hit.note || '' } : null,
-              note: hit
-                ? `⚡ 特别关注「${hit.keyword}」${isLow ? ' · 跟踪以来最低' : ''}`
-                : isLow ? `跟踪以来最低 · 来自「${search.name}」` : `来自「${search.name}」`,
+              alert: fastHit
+                ? { keyword: target.name, note: fastHit.reason, fast: true }
+                : hit ? { keyword: hit.keyword, note: hit.note || '' } : null,
+              note: fastHit
+                ? `⚡ 快速盯梢「${target.name}」· ${fastHit.reason}`
+                : hit
+                  ? `⚡ 特别关注「${hit.keyword}」${isLow ? ' · 跟踪以来最低' : ''}`
+                  : isLow ? `跟踪以来最低 · 来自「${search.name}」` : `来自「${search.name}」`,
             });
-            notifiable.push({ ...ev, origin: 'search', alertHit: hit || null });
+            const alertHit = fastHit ? toAlertHit(target, fastHit, hit) : hit || null;
+            notifiable.push({ ...ev, origin: 'search', alertHit });
+            fastNotified = !!fastHit;
+          }
+        }
+
+        // 重新有货：只给快速盯梢的目标记（超低价常常就是刚补上的货）。
+        // 别的行进进出出缺货很频繁，全记下来会把历史记录刷满
+        if (target && !isNew && wasInStock === false && row.inStock) {
+          const fastHit = judgeHit(row, { type: 'restock' }, target, fastCtx(target));
+          const ev = store.addEvent({
+            ...evBase,
+            type: 'restock',
+            alert: fastHit ? { keyword: target.name, note: fastHit.reason, fast: true } : undefined,
+            note: fastHit ? `⚡ 快速盯梢「${target.name}」· ${fastHit.reason}` : `重新有货 · 来自「${search.name}」`,
+          });
+          // 同一台又降价又补货：上面降价那条已经报过了，别报两遍
+          if (fastHit && !fastNotified) {
+            notifiable.push({ ...ev, origin: 'search', alertHit: toAlertHit(target, fastHit) });
           }
         }
       }

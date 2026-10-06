@@ -197,7 +197,7 @@ function refreshTab() {
   else if (state.tab === 'history') loadEvents();
   else if (state.tab === 'watch') loadWatch();
   else if (state.tab === 'searches') renderSearches();
-  else if (state.tab === 'settings') { fillSettings(); loadLogs(); loadAlerts(); }
+  else if (state.tab === 'settings') { fillSettings(); loadLogs(); loadAlerts(); loadFast(); }
 }
 
 /* ---------------- 电脑榜 ---------------- */
@@ -1197,6 +1197,118 @@ $('#alertList').addEventListener('change', async (e) => {
   renderAlerts(items);
 });
 
+/* ---------------- 快速盯梢 ---------------- */
+const hhmm = (ts) => new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+function fastStatusText(st) {
+  if (!st) return '—';
+  if (!st.enabled) return '没开。打开后几秒内先查一轮（第一轮只摸底，不报）。';
+  if (!st.targets) return '还没有启用的目标。';
+  const bits = [];
+  if (st.inProgress) bits.push('正在查…');
+  else if (st.pausedUntil) bits.push(`被 Best Buy 拦了，${hhmm(st.pausedUntil)} 再试（不做绕过）`);
+  else if (st.nextRunAt) bits.push(`下一轮 ${hhmm(st.nextRunAt)}`);
+  else bits.push('定时查询停着，不会自动跑');
+  const lr = st.lastRun;
+  if (lr) {
+    bits.push(`上一轮 ${hhmm(lr.at)}：看了 ${lr.checked} 台，命中 ${lr.hits} 条` + (lr.error ? `，出错：${lr.error}` : ''));
+  }
+  return bits.join(' · ');
+}
+
+async function loadFast() {
+  try {
+    renderFast(await api('/api/fastwatch'));
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+function renderFast({ config, status }) {
+  $('#fwEnabled').checked = !!config.enabled;
+  if (document.activeElement !== $('#fwInterval')) $('#fwInterval').value = config.intervalMinutes ?? 4;
+  $('#fwStatus').textContent = fastStatusText(status);
+  const box = $('#fwList');
+  const items = config.targets || [];
+  if (!items.length) {
+    box.innerHTML = '<div class="catRow"><span>还没有目标。比如品牌词 <code>rog</code>、显卡 <code>5090</code></span></div>';
+    return;
+  }
+  box.innerHTML = items.map((t) => {
+    const bits = [
+      t.includeOpenBox !== false ? '含 Open Box' : '只看全新',
+      t.maxPrice != null ? `≤$${t.maxPrice}` : null,
+      `降幅 ≥${t.minDropPercent ?? 10}%`,
+      t.ignoreQuietHours ? '免打扰也提醒' : null,
+    ].filter(Boolean);
+    return `<div class="catRow" style="justify-content:space-between;${t.enabled === false ? 'opacity:.45' : ''}">
+      <span style="flex:1">
+        <code>${esc(t.name)}</code>
+        <span style="color:var(--fg-mute)"> ${esc(bits.join(' · '))}</span>
+      </span>
+      <label class="chk" style="margin-right:8px"><input type="checkbox" data-fw-on="${esc(t.id)}" ${t.enabled !== false ? 'checked' : ''}> 启用</label>
+      <button class="btn sm danger" data-fw-rm="${esc(t.id)}">删除</button>
+    </div>`;
+  }).join('');
+}
+
+async function putFast(body) {
+  try {
+    renderFast(await api('/api/fastwatch', { method: 'PUT', body }));
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+$('#fwEnabled').addEventListener('change', (e) => {
+  putFast({ enabled: e.target.checked });
+  toast(e.target.checked ? '快速盯梢已打开，几秒后先查一轮摸底' : '快速盯梢已关闭', 'ok');
+});
+$('#fwInterval').addEventListener('change', (e) => putFast({ intervalMinutes: e.target.value }));
+
+$('#btnFwAdd').addEventListener('click', async () => {
+  const gpu = $('#fwGpu').value.trim();
+  if (!gpu) { toast('先填显卡，比如 5090', 'err'); return; }
+  try {
+    const r = await api('/api/fastwatch/targets', { method: 'POST', body: {
+      brand: $('#fwBrand').value,
+      gpu,
+      maxPrice: $('#fwMax').value,
+      includeOpenBox: $('#fwOpenBox').checked,
+      ignoreQuietHours: $('#fwQuiet').checked,
+    }});
+    $('#fwGpu').value = '';
+    $('#fwMax').value = '';
+    renderFast(r);
+    toast(`已添加快速盯梢：${r.item.name}`, 'ok');
+  } catch (e) { toast(e.message, 'err'); }
+});
+$('#fwGpu').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#btnFwAdd').click(); });
+
+$('#fwList').addEventListener('click', async (e) => {
+  const rm = e.target.closest('[data-fw-rm]');
+  if (!rm) return;
+  if (!confirm('删除这条快速盯梢？')) return;
+  try {
+    renderFast(await api(`/api/fastwatch/targets/${rm.dataset.fwRm}`, { method: 'DELETE' }));
+    toast('已删除', 'ok');
+  } catch (err) { toast(err.message, 'err'); }
+});
+
+$('#fwList').addEventListener('change', async (e) => {
+  const t = e.target.closest('[data-fw-on]');
+  if (!t) return;
+  try {
+    renderFast(await api(`/api/fastwatch/targets/${t.dataset.fwOn}`, { method: 'PATCH', body: { enabled: t.checked } }));
+  } catch (err) { toast(err.message, 'err'); }
+});
+
+$('#btnFwRun').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/fastwatch/run', { method: 'POST' });
+    renderFast(r);
+    if (!r.config.enabled) toast('快速盯梢没开，先勾上「启用」', 'err');
+    else if (r.status?.pausedUntil) toast(`刚被 Best Buy 拦过，${hhmm(r.status.pausedUntil)} 之前不查`, 'err');
+    else toast('已开始查，有命中会立刻通知');
+  } catch (e) { toast(e.message, 'err'); }
+});
+
 /* ---------------- 状态栏 ---------------- */
 function renderStatus() {
   const s = state.status;
@@ -1208,7 +1320,8 @@ function renderStatus() {
   text.textContent = s.cycleInProgress
     ? '正在查询…'
     : s.running
-      ? `每 ${s.intervalMinutes} 分钟自动查询`
+      ? `每 ${s.intervalMinutes} 分钟自动查询` +
+        (s.fast?.enabled && s.fast.targets ? ` · 快速盯梢每 ${s.fast.intervalMinutes} 分钟` : '')
       : '已停止';
 
   $('#btnToggle').textContent = s.running ? '停止' : '启动';
@@ -1255,6 +1368,10 @@ function connectStream() {
     if (msg.type === 'status' || msg.type === 'hello') {
       state.status = msg.payload;
       renderStatus();
+      if (state.tab === 'settings') $('#fwStatus').textContent = fastStatusText(state.status.fast);
+    } else if (msg.type === 'fast') {
+      if (msg.payload.hits) toast(`快速盯梢：命中 ${msg.payload.hits} 条，已通知`, 'ok');
+      if (msg.payload.found || msg.payload.drops) loadCounts();
     } else if (msg.type === 'cycle') {
       state.status = { ...state.status, lastCycle: msg.payload, cycleInProgress: false };
       renderStatus();

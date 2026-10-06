@@ -350,8 +350,9 @@ export const store = {
     return `${p.retailer || 'bestbuy'}|${p.sku}|${p.condition || 'New'}`;
   },
   /**
-   * 写入一次观测。返回 { isNew, dropped, prevPrice, row }，
-   * 由调用方决定要不要生成事件/通知。
+   * 写入一次观测。返回 { isNew, dropped, prevPrice, wasInStock, row }，
+   * 由调用方决定要不要生成事件/通知。wasInStock 是这次之前的有货状态（新行为 null），
+   * 快速盯梢靠它认出「重新有货」。
    */
   upsertBoard(p, searchId) {
     const key = this.boardKey(p);
@@ -414,7 +415,7 @@ export const store = {
 
     boardFile.data.rows[key] = row;
     boardFile.save();
-    return { isNew, dropped, prevPrice: old?.price ?? null, row };
+    return { isNew, dropped, prevPrice: old?.price ?? null, wasInStock: old ? old.inStock !== false : null, row };
   },
   listBoard() {
     return Object.values(boardFile.data.rows);

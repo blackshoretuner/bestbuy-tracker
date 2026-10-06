@@ -21,6 +21,7 @@ import { isComponent, isComputer, FORM_LABEL } from './src/specs.js';
 import { buildTierIndex, crossSection, dealScore, historyPercentile } from './src/analytics.js';
 import { csvEscape, getLogs, log, num, onLog, parseSkuFromInput, uid } from './src/util.js';
 import { normalizeAlert } from './src/alerts.js';
+import { normalizeTarget, validGpu } from './src/fastwatch.js';
 import { clearPidFile, newToken, writePidFile } from './src/instance.js';
 
 // 每次启动生成一个随机 token。控制脚本从 pid 文件里读到它才能调关机接口，
@@ -89,6 +90,10 @@ function broadcast(type, payload) {
 
 tracker.on('status', (s) => broadcast('status', s));
 tracker.on('cycle', (s) => broadcast('cycle', s));
+tracker.on('fast', (run) => {
+  broadcast('fast', run);
+  if (run.found || run.drops) broadcast('board', { changed: true });
+});
 onLog((line) => broadcast('log', line));
 
 /* ------------------------------------------------------------------ */
@@ -596,6 +601,64 @@ route('DELETE', '/api/alerts/:id', async (req, res, params) => {
   const items = (store.getSettings().alerts || []).filter((a) => a.id !== params.id);
   store.updateSettings({ alerts: items });
   json(res, { ok: true, items });
+});
+
+/* ---------------- 快速盯梢 ---------------- */
+const fastConfig = () => store.getSettings().fastWatch || { enabled: false, intervalMinutes: 4, targets: [] };
+const fastReply = (res, extra = {}) =>
+  json(res, { ok: true, config: fastConfig(), status: tracker.status().fast, ...extra });
+
+route('GET', '/api/fastwatch', async (req, res) => fastReply(res));
+
+route('PUT', '/api/fastwatch', async (req, res) => {
+  const body = await readBody(req);
+  const patch = {};
+  if (body.enabled !== undefined) patch.enabled = !!body.enabled;
+  if (body.intervalMinutes !== undefined) {
+    patch.intervalMinutes = Math.min(30, Math.max(2, Math.round(Number(body.intervalMinutes) || 4)));
+  }
+  store.updateSettings({ fastWatch: patch });
+  tracker.rescheduleFast({ soon: patch.enabled === true });
+  fastReply(res);
+});
+
+route('POST', '/api/fastwatch/targets', async (req, res) => {
+  const body = await readBody(req);
+  if (!validGpu(body.gpu)) {
+    return fail(res, new Error('显卡写成 4 位数字，可以带 Ti / Super，比如 5090、5070 Ti'), 400);
+  }
+  const targets = [...fastConfig().targets];
+  const item = normalizeTarget(body, uid('fw_'));
+  targets.push(item);
+  store.updateSettings({ fastWatch: { targets } });
+  tracker.rescheduleFast({ soon: true });
+  fastReply(res, { item });
+});
+
+route('PATCH', '/api/fastwatch/targets/:id', async (req, res, params) => {
+  const body = await readBody(req);
+  const targets = [...fastConfig().targets];
+  const i = targets.findIndex((t) => t.id === params.id);
+  if (i < 0) return fail(res, new Error('没找到这条目标'), 404);
+  if (body.gpu !== undefined && !validGpu(body.gpu)) {
+    return fail(res, new Error('显卡写成 4 位数字，可以带 Ti / Super，比如 5090、5070 Ti'), 400);
+  }
+  targets[i] = normalizeTarget({ ...targets[i], ...body }, params.id);
+  store.updateSettings({ fastWatch: { targets } });
+  tracker.rescheduleFast();
+  fastReply(res, { item: targets[i] });
+});
+
+route('DELETE', '/api/fastwatch/targets/:id', async (req, res, params) => {
+  const targets = fastConfig().targets.filter((t) => t.id !== params.id);
+  store.updateSettings({ fastWatch: { targets } });
+  tracker.rescheduleFast();
+  fastReply(res);
+});
+
+route('POST', '/api/fastwatch/run', async (req, res) => {
+  tracker.runFastCycle('手动').catch(() => {});
+  fastReply(res);
 });
 
 /* ---------------- 调度控制 ---------------- */

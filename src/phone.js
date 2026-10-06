@@ -96,7 +96,7 @@ export async function pushDrops(drops, settings) {
     const from = d.prevPrice != null ? `$${d.prevPrice} → ` : '';
     const r = await pushPhone(
       {
-        title: hit ? `⚡ 特别关注：${hit.keyword}` : '降价了',
+        title: hit ? hit.title || `⚡ 特别关注：${hit.keyword}` : '降价了',
         body: `${d.name}\n${from}$${d.price}${pct}${hit?.note ? '\n' + hit.note : ''}`,
         url: d.url,
         urgent: !!hit,

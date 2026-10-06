@@ -116,7 +116,7 @@ export async function notifyDrops(drops, settings) {
     const from = d.prevPrice !== null && d.prevPrice !== undefined ? `$${d.prevPrice} → ` : '';
     const hit = d.alertHit;
     await notify({
-      title: hit ? `⚡ 特别关注：${hit.keyword}` : d.type === 'target' ? '已到目标价！' : '降价了',
+      title: hit ? hit.title || `⚡ 特别关注：${hit.keyword}` : d.type === 'target' ? '已到目标价！' : '降价了',
       body: `${d.name}\n${from}$${d.price}${pct}${hit?.note ? '\n' + hit.note : ''}`,
       launchUrl: d.url,
       // 特别关注强制带声音：专门设了规则，别让它悄悄划过去

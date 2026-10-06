@@ -75,6 +75,15 @@ export const DEFAULT_SETTINGS = {
   // 规则结构见 src/alerts.js 的 ALERT_DEFAULTS。
   alerts: [],
 
+  // ---- 快速盯梢 ----
+  // 点名几款机型（如 ROG + RTX 5090），每几分钟查一次 Best Buy，新上架 / 补货 / 降价
+  // 够便宜就立刻通知。只提醒，不下单。目标的结构和判定规则见 src/fastwatch.js
+  fastWatch: {
+    enabled: false,
+    intervalMinutes: 4,            // 2–30；起点到起点算，上一轮结束后至少歇 1 分钟
+    targets: [],
+  },
+
   // ---- 通知 ----
   notify: {
     toast: true,                 // Windows 桌面通知

@@ -324,7 +324,7 @@
 
     <div class="card">
       <h3>手机推送</h3>
-      <em class="fieldHint">不在电脑前也能收到。默认只推「特别关注」的命中，普通降价推到手机太吵。</em>
+      <em class="fieldHint">不在电脑前也能收到。默认只推「特别关注」和「快速盯梢」的命中，普通降价推到手机太吵。</em>
       <label class="chk"><input type="checkbox" id="phEnabled"> 启用手机推送</label>
       <label class="field">
         <span>通道</span>
@@ -348,7 +348,7 @@
         <label class="field"><span>设备 key</span><input class="in" id="phBarkKey" placeholder="Bark App 首页那串 key"></label>
         <label class="field"><span>服务器</span><input class="in" id="phBarkServer" placeholder="https://api.day.app"></label>
       </div>
-      <label class="chk"><input type="checkbox" id="phOnlyAlerts"> 只推特别关注（关掉则普通降价也推，每轮最多 3 条）</label>
+      <label class="chk"><input type="checkbox" id="phOnlyAlerts"> 只推特别关注 / 快速盯梢的命中（关掉则普通降价也推，每轮最多 3 条）</label>
       <div class="row"><button class="btn sm" data-diag="phone">测手机</button>
         <em class="fieldHint" style="margin:0">先点下面「保存设置」再测</em></div>
     </div>
@@ -372,6 +372,30 @@
         <button class="btn primary sm" id="btnAddAlert">添加</button>
       </div>
       <div class="catList" id="alertList"></div>
+    </div>
+
+    <div class="card">
+      <h3>快速盯梢</h3>
+      <em class="fieldHint">点名几款机型，每几分钟查一次 Best Buy（全新 + Open Box）。<b>新上架、重新有货、降价</b>时，
+        只要比 Best Buy 上同显卡的笔记本都便宜、或降幅 ≥10%、或低于你填的价位，就立刻弹通知、推手机。
+        <b>只提醒，不下单</b> —— 结账你自己点。第一轮只摸底，不报。</em>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="fwEnabled"> 启用</label>
+        <span class="muted">每</span>
+        <input class="in" id="fwInterval" type="number" min="2" max="30" style="width:56px">
+        <span class="muted">分钟查一次</span>
+        <button class="btn sm" id="btnFwRun" type="button">立即查一次</button>
+      </div>
+      <div class="fieldHint" id="fwStatus">—</div>
+      <div class="row" style="flex-wrap:wrap;gap:6px">
+        <input class="in w90" id="fwBrand" placeholder="品牌词" value="rog">
+        <input class="in w90" id="fwGpu" placeholder="显卡，如 5090">
+        <input class="in w90" id="fwMax" type="number" min="0" placeholder="价位上限">
+        <label class="chk"><input type="checkbox" id="fwOpenBox" checked> 含 Open Box</label>
+        <label class="chk"><input type="checkbox" id="fwQuiet"> 免打扰也提醒</label>
+        <button class="btn primary sm" id="btnFwAdd" type="button">添加</button>
+      </div>
+      <div class="catList" id="fwList"></div>
     </div>
 
     <div class="card">
